@@ -1,0 +1,321 @@
+"""
+vision_one_client.py
+
+Thin client for the Trend Vision One Search API, focused on pulling
+CEGP (Cloud Email Gateway Protection) detection data.
+
+Docs referenced:
+- API servers per region: https://automation.trendmicro.com/xdr/api-v3/#tag
+- Get detection data:     https://automation.trendmicro.com/xdr/api-v3/#tag/Search
+- Get email activity data: https://automation.trendmicro.com/xdr/api-v3/#tag/Search
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from dataclasses import dataclass, field
+
+import requests
+
+# Region -> API base URL
+REGION_SERVERS = {
+    "us": "https://api.xdr.trendmicro.com",
+    "eu": "https://api.eu.xdr.trendmicro.com",
+    "sg": "https://api.sg.xdr.trendmicro.com",
+    "jp": "https://api.xdr.trendmicro.co.jp",
+    "au": "https://api.au.xdr.trendmicro.com",
+    "in": "https://api.in.xdr.trendmicro.com",
+    "mea": "https://api.mea.xdr.trendmicro.com",
+}
+
+# pname means different things on different data sources (confirmed via
+# Trend Micro's internal Log Schema reference, KA-0015974) -- this is the
+# single most common cause of "the API returns nothing" for this app:
+#
+#   Detection data (/v3.0/search/detections)        -> pname is a TEXT
+#     product name, e.g. "Email and Collaboration Security" for CEGP.
+#   Email Activity Data (/v3.0/search/emailActivities) -> pname is a
+#     NUMERIC internal product ID: 742 = Vision One Email and
+#     Collaboration Security (CEGP), 733 = Cloud App Security (legacy/CASB,
+#     not CEGP -- excluded here).
+#
+# Using a text string like "CEGP" or "Cloud Email Gateway" against
+# emailActivities will silently match zero rows, since the real value
+# there is just the number 742.
+CEGP_DETECTION_PNAME = "Email and Collaboration Security"
+CEGP_EMAIL_ACTIVITY_PNAME = "742"
+
+DETECTIONS_PATH = "/v3.0/search/detections"
+EMAIL_ACTIVITIES_PATH = "/v3.0/search/emailActivities"
+AUDIT_LOGS_PATH = "/v3.0/audit/logs"
+
+
+class VisionOneAPIError(Exception):
+    """Raised when the Vision One API returns an error response."""
+
+    def __init__(self, status_code: int, message: str):
+        self.status_code = status_code
+        self.message = message
+        super().__init__(f"Vision One API error {status_code}: {message}")
+
+
+@dataclass
+class DetectionRecord:
+    raw: dict = field(default_factory=dict)
+
+    @property
+    def pname(self) -> str:
+        return self.raw.get("pname", "Unknown")
+
+    @property
+    def threat_name(self) -> str:
+        return (
+            self.raw.get("malName")
+            or self.raw.get("eventName")
+            or self.raw.get("eventSubName")
+            or "Unclassified threat"
+        )
+
+    @property
+    def detected_time(self) -> str:
+        return self.raw.get("detectedDateTime") or self.raw.get("eventTime") or ""
+
+    @property
+    def sender(self) -> str:
+        return self.raw.get("suser") or self.raw.get("mailFromAddresses") or ""
+
+    @property
+    def recipient(self) -> str:
+        return self.raw.get("duser") or self.raw.get("mailToAddresses") or ""
+
+    @property
+    def subject(self) -> str:
+        return self.raw.get("mailMsgSubject", "")
+
+
+class VisionOneClient:
+    def __init__(self, api_key: str, region: str = "us", timeout: int = 30):
+        if region not in REGION_SERVERS:
+            raise ValueError(
+                f"Unknown region '{region}'. Valid options: {', '.join(REGION_SERVERS)}"
+            )
+        self.base_url = REGION_SERVERS[region]
+        self.api_key = api_key
+        self.timeout = timeout
+
+    def _headers(self, query: str) -> dict:
+        return {
+            "Authorization": f"Bearer {self.api_key}",
+            "TMV1-Query": query,
+        }
+
+    def _get(self, path: str, query: str, start: str, end: str, top: int = 200) -> list[dict]:
+        """Paginated GET against a Vision One search endpoint."""
+        url = self.base_url + path
+        params = {
+            "startDateTime": start,
+            "endDateTime": end,
+            "top": top,
+        }
+        headers = self._headers(query)
+
+        items: list[dict] = []
+        next_url = url
+        next_params = params
+        while next_url:
+            resp = requests.get(
+                next_url, params=next_params, headers=headers, timeout=self.timeout
+            )
+            if resp.status_code != 200:
+                try:
+                    err = resp.json().get("error", {})
+                    msg = err.get("message", resp.text)
+                except ValueError:
+                    msg = resp.text
+                raise VisionOneAPIError(resp.status_code, msg)
+
+            payload = resp.json()
+            items.extend(payload.get("items", []))
+
+            next_link = payload.get("nextLink")
+            if next_link:
+                next_url = next_link
+                next_params = None  # nextLink already carries the query params
+            else:
+                next_url = None
+
+        return items
+
+    def get_cegp_detections(
+        self,
+        start: dt.datetime,
+        end: dt.datetime,
+        extra_query: str | None = None,
+    ) -> list[DetectionRecord]:
+        """
+        Pull detection records attributable to CEGP within a date range.
+
+        Detection data's pname is a text product name -- "Email and
+        Collaboration Security" covers CEGP.
+        """
+        query = f'pname:"{CEGP_DETECTION_PNAME}"'
+        if extra_query:
+            query = f"({query}) and ({extra_query})"
+
+        start_iso = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        raw_items = self._get(DETECTIONS_PATH, query, start_iso, end_iso)
+        return [DetectionRecord(raw=item) for item in raw_items]
+
+    def get_total_scanned_count(
+        self, start: dt.datetime, end: dt.datetime, max_pages: int = 25
+    ) -> int:
+        """
+        Approximate total inbound mail volume scanned by CEGP in the period,
+        used as the denominator for block rate. Paginates the email-activity
+        search endpoint and counts items (capped at max_pages to keep this
+        bounded for high-volume tenants -- if the cap is hit the count is a
+        lower bound, which the caller should treat as approximate).
+
+        Email Activity Data's pname is numeric (742 = CEGP/Email and
+        Collaboration Security) -- see CEGP_EMAIL_ACTIVITY_PNAME above.
+        Not filtering on mailDirection here: Vision One doesn't document
+        its accepted values, and guessing wrong (as earlier versions of
+        this client did) silently returns zero rows instead of an error.
+        """
+        query = f'pname:"{CEGP_EMAIL_ACTIVITY_PNAME}"'
+        start_iso = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        url = self.base_url + EMAIL_ACTIVITIES_PATH
+        headers = self._headers(query)
+        params = {
+            "startDateTime": start_iso,
+            "endDateTime": end_iso,
+            "top": 200,
+            "select": "msgUuid",
+        }
+
+        count = 0
+        next_url = url
+        next_params = params
+        pages = 0
+        while next_url and pages < max_pages:
+            resp = requests.get(
+                next_url, params=next_params, headers=headers, timeout=self.timeout
+            )
+            if resp.status_code != 200:
+                try:
+                    err = resp.json().get("error", {})
+                    msg = err.get("message", resp.text)
+                except ValueError:
+                    msg = resp.text
+                raise VisionOneAPIError(resp.status_code, msg)
+
+            payload = resp.json()
+            count += len(payload.get("items", []))
+            next_link = payload.get("nextLink")
+            pages += 1
+            if next_link:
+                next_url = next_link
+                next_params = None
+            else:
+                next_url = None
+
+        return count
+
+    def get_quarantine_restore_count(
+        self, start: dt.datetime, end: dt.datetime, max_pages: int = 10
+    ) -> int:
+        """
+        Best-effort false-positive proxy: counts "Restore" activity under the
+        Response Management category in the Audit Logs, i.e. messages a
+        customer pulled back out of quarantine because they were legitimate.
+
+        Vision One's audit log activity strings aren't fully documented for
+        this category, so this filters on the documented category and then
+        matches "restore" in the activity/details client-side rather than
+        assuming an exact activity string.
+        """
+        start_iso = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        url = self.base_url + AUDIT_LOGS_PATH
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "TMV1-Filter": "category eq 'Response Management'",
+        }
+        params = {
+            "startDateTime": start_iso,
+            "endDateTime": end_iso,
+            "top": 200,
+        }
+
+        count = 0
+        next_url = url
+        next_params = params
+        pages = 0
+        while next_url and pages < max_pages:
+            resp = requests.get(
+                next_url, params=next_params, headers=headers, timeout=self.timeout
+            )
+            if resp.status_code != 200:
+                try:
+                    err = resp.json().get("error", {})
+                    msg = err.get("message", resp.text)
+                except ValueError:
+                    msg = resp.text
+                raise VisionOneAPIError(resp.status_code, msg)
+
+            payload = resp.json()
+            for item in payload.get("items", []):
+                activity = (item.get("activity") or "").lower()
+                if "restore" in activity:
+                    count += 1
+
+            next_link = payload.get("nextLink")
+            pages += 1
+            if next_link:
+                next_url = next_link
+                next_params = None
+            else:
+                next_url = None
+
+        return count
+
+    def probe_any_detections(self, start: dt.datetime, end: dt.datetime) -> int:
+        """
+        Diagnostic: how many detection records exist in this window for
+        ANY product, no pname filter at all (pname:* is a valid wildcard
+        since pname is a partial-match field). Used to tell apart "this
+        tenant has zero detections in this period" from "detections exist,
+        but our pname filter excludes all of them."
+        """
+        start_iso = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+        items = self._get(DETECTIONS_PATH, "pname:*", start_iso, end_iso, top=1)
+        return len(items)
+
+    def probe_email_pname_values(self, start: dt.datetime, end: dt.datetime) -> set[str]:
+        """
+        Diagnostic: sample the actual pname values seen on detections that
+        partially match "Email" in this window, so a mismatch against
+        CEGP_DETECTION_PNAME is visible directly instead of guessed at.
+        """
+        start_iso = start.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_iso = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+        items = self._get(DETECTIONS_PATH, "pname:Email", start_iso, end_iso, top=50)
+        return {item.get("pname", "") for item in items if item.get("pname")}
+
+    def test_connection(self) -> bool:
+        """Lightweight call to verify the API key/region work."""
+        now = dt.datetime.utcnow()
+        start = now - dt.timedelta(minutes=5)
+        try:
+            self._get(DETECTIONS_PATH, f'pname:"{CEGP_DETECTION_PNAME}"',
+                      start.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                      now.strftime("%Y-%m-%dT%H:%M:%SZ"), top=1)
+            return True
+        except VisionOneAPIError:
+            raise

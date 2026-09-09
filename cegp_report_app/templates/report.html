@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ data.customer_name }} — Email Threat Prevention Report</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <div class="report-toolbar no-print">
+    <a href="{{ url_for('index') }}">&larr; New report</a>
+    <button onclick="downloadReport()">Download HTML</button>
+  </div>
+
+  <div class="shell">
+
+    <!-- Header -->
+    <div class="header">
+      <svg class="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" rx="22" fill="#1e1e2e"/>
+        <path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/>
+        <polygon points="72,42 85,52 72,62" fill="#D71921"/>
+        <path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/>
+      </svg>
+      <div>
+        <div class="brand-name">{{ data.customer_name }}</div>
+        <div class="brand-sub">Email Threat Prevention Report &middot; {{ data.period_start }} to {{ data.period_end }}</div>
+      </div>
+    </div>
+
+    <!-- Mail tracking: volume by action/status -->
+    <div class="card">
+      <div class="card-title">Mail tracking &mdash; volume by action / status</div>
+      {% if data.mail_status_breakdown %}
+      <div class="bar-chart">
+        {% set max_count = data.mail_status_breakdown|map(attribute=1)|max %}
+        {% for label, count, pct in data.mail_status_breakdown %}
+        <div class="bar-chart-row">
+          <div class="bar-chart-label">{{ label }}</div>
+          <div class="bar-chart-track">
+            <div class="bar-chart-fill{% if loop.first %} bar-chart-fill--top{% endif %}" style="width: {{ (count / max_count * 100)|round(1) if max_count else 0 }}%"></div>
+          </div>
+          <div class="bar-chart-value">{{ "{:,}".format(count) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="efficacy-note">{{ "{:,}".format(data.total_tracked) }} total tracked messages this period (blocking-path detections + accepted mail activity). "Delivered &ndash; flagged" is mail the gateway marked as spam/graymail but let through per policy, not a block; "Detected, not blocked" is a blocking-path event logged in monitor mode rather than stopped.</p>
+      {% else %}
+      <p class="efficacy-note">Mail tracking breakdown isn't available for this run &mdash; the underlying scanned-volume and/or delivered-flagged lookups didn't return data (permission issue or this tenant's data hasn't reached the data lake yet).</p>
+      {% endif %}
+    </div>
+
+    <!-- Potential loss avoided -->
+    <div class="card">
+      <div class="card-title">Potential loss avoided this period</div>
+      <div class="balance-figure">${{ "{:,.0f}".format(data.total_saved) }}</div>
+      <div class="balance-sub">Based on {{ "{:,}".format(data.total_blocked) }} email threats blocked before they reached the inbox, valued per Trend Micro's TMES/IC3 loss-per-victim methodology below. Generated {{ generated_on }}.</div>
+    </div>
+
+    <div class="card">
+      <div class="stat-row">
+        <div class="stat-cell">
+          <div class="num">{{ "{:,}".format(data.total_blocked) }}</div>
+          <div class="lbl">Total threats blocked</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ data.category_lines|length }}</div>
+          <div class="lbl">Threat categories seen</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ data.threats_by_type|length }}</div>
+          <div class="lbl">Distinct threat signatures</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Value ledger -->
+    <div class="card">
+      <div class="card-title">Potential loss ledger, by TMES sub-type</div>
+      {% for line in data.category_lines %}
+      <div class="ledger-row">
+        <span class="name">{{ line.category }}{% if not line.cost_mapped %} <span style="color:var(--muted); font-size:0.75em;">(not cost-mapped)</span>{% endif %}</span>
+        <span class="leader"></span>
+        <span class="count">{{ line.count }}&times;</span>
+        <span class="amount">{{ "${:,.0f}".format(line.subtotal) if line.cost_mapped else "—" }}</span>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- How valued -->
+    <div class="card">
+      <div class="card-title">How each sub-type is valued</div>
+      <table class="sample-table">
+        <thead>
+          <tr><th>TMES sub-type</th><th>IC3 category</th><th>Loss per victim</th><th>Value per detection (period-scaled)</th></tr>
+        </thead>
+        <tbody>
+          {% for line in data.category_lines %}
+          <tr>
+            <td>{{ line.category }}</td>
+            <td>{{ line.ic3_category if line.cost_mapped else "— (not cost-mapped)" }}</td>
+            <td>{{ "${:,.2f}".format(line.loss_per_victim) if line.cost_mapped else "—" }}</td>
+            <td>{{ "${:,.2f}".format(line.unit_value) if line.cost_mapped else "—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="efficacy-note">Value per detection = IC3 loss-per-victim &times; (days in reporting period &divide; 91.25, an average quarter) &mdash; the same formula as Trend Micro's internal TMES sheet, generalized from its fixed quarterly figure to any date range. Source: {{ ic3_source }}. Sub-types with no IC3 category mapping (Email Reputation Service, SPF Violation, Graymail, Scan Exception, Content Filtering, Attachment) are counted but not costed, matching the source template's blank Category Mapping column for these.</p>
+    </div>
+
+    <!-- Top 10 policy detection summary -->
+    <div class="card">
+      <div class="card-title">Top 10 Policy Detection Summary</div>
+      <div class="bar-chart">
+        {% set max_count = data.threats_by_type|map(attribute=1)|max %}
+        {% for name, count in data.threats_by_type %}
+        <div class="bar-chart-row">
+          <div class="bar-chart-label">{{ name }}</div>
+          <div class="bar-chart-track">
+            <div class="bar-chart-fill{% if loop.first %} bar-chart-fill--top{% endif %}" style="width: {{ (count / max_count * 100)|round(1) if max_count else 0 }}%"></div>
+          </div>
+          <div class="bar-chart-value">{{ "{:,}".format(count) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Detection efficacy -->
+    <div class="card">
+      <div class="card-title">Detection efficacy</div>
+      {% if data.efficacy_available %}
+      <div class="stat-row" style="margin-bottom: 1.2rem">
+        <div class="stat-cell">
+          <div class="num">{{ "{:,.2f}".format(data.block_rate) + "%" if data.block_rate is not none else "N/A" }}</div>
+          <div class="lbl">Block rate ({{ "{:,}".format(data.total_blocked) }} of {{ "{:,}".format(data.total_inbound) }} total inbound messages)</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ data.restore_count if data.restore_count is not none else "N/A" }}</div>
+          <div class="lbl">Messages restored from quarantine (false-positive proxy)</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ "{:,.2f}".format(data.false_positive_rate) + "%" if data.false_positive_rate is not none else "N/A" }}</div>
+          <div class="lbl">False-positive rate of blocked volume</div>
+        </div>
+      </div>
+      <div class="sub-h">Catch rate by threat category</div>
+      {% for line in data.category_lines %}
+      <div class="ledger-row">
+        <span class="name">{{ line.category }}</span>
+        <span class="leader"></span>
+        <span class="count">{{ line.count }}&times;</span>
+        <span class="amount">{{ "{:,.3f}".format(line.scan_share) + "%" if line.scan_share is not none else "N/A" }}</span>
+      </div>
+      {% endfor %}
+      <p class="efficacy-note">Catch rate = messages in that category &divide; total inbound messages scanned by CEGP in the period. False-positive proxy = messages a customer administrator restored from quarantine (Response Management audit log activity), as a share of all blocked messages &mdash; a lower bound on false positives, since not every misclassified message gets restored.</p>
+      {% else %}
+      <p class="efficacy-note">
+        {% if data.total_scanned == 0 %}
+        Detection-efficacy figures aren't shown because the scanned-volume lookup returned zero messages for this period. If threats were blocked but scanned volume shows zero, that usually means a query/permission mismatch rather than genuinely no mail &mdash; worth double-checking the API key's Search permission on email activity data and the pname/date range used.
+        {% else %}
+        Detection-efficacy figures (block rate, false-positive rate) require total scanned-volume data, which wasn't available for this run &mdash; only blocked-message counts were. This can happen if the API key lacks Search permission on email activity data, or the tenant's mail volume was too large to page through within the request limit.
+        {% endif %}
+      </p>
+      {% endif %}
+    </div>
+
+    <!-- Daily volume -->
+    {% if data.daily_counts %}
+    <div class="card">
+      <div class="card-title">Daily detection volume</div>
+      <div class="trend-bars">
+        {% set max_count = data.daily_counts|map(attribute=1)|max %}
+        {% for day, count in data.daily_counts %}
+        <div class="trend-bar" style="height: {{ (count / max_count * 100)|round(1) if max_count else 0 }}%" title="{{ day }}: {{ count }}"></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Top targeted -->
+    {% if data.top_targeted_recipients or data.sample_detections %}
+    <div class="card">
+      <div class="card-title">Most targeted mailboxes</div>
+      {% for recipient, count in data.top_targeted_recipients %}
+      <div class="recipient-row">
+        <span>{{ recipient }}</span>
+        <span class="count">{{ count }} blocked</span>
+      </div>
+      {% endfor %}
+
+      {% if data.sample_detections %}
+      <div class="card-footer">
+        <button class="details-btn" onclick="toggleDetails(this)">Details</button>
+      </div>
+      <div class="details-panel" hidden>
+        <div class="sub-h">Sample of blocked messages</div>
+        <table class="sample-table">
+          <thead>
+            <tr><th>Time</th><th>Threat</th><th>Sender</th><th>Recipient</th><th>Subject</th></tr>
+          </thead>
+          <tbody>
+            {% for row in data.sample_detections %}
+            <tr>
+              <td>{{ row.time }}</td>
+              <td>{{ row.threat }}</td>
+              <td>{{ row.sender }}</td>
+              <td>{{ row.recipient }}</td>
+              <td>{{ row.subject }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Methodology -->
+    <div class="card">
+      <div class="card-title">Methodology</div>
+      <p class="methodology-text">Figures are drawn from Cloud Email Gateway Protection detection logs in Trend Vision One for the stated period, using Trend Micro's internal TMES sheet Potential Loss methodology: <strong>potential loss avoided = (detections in a TMES sub-type) &times; (IC3 loss-per-victim for that sub-type's category) &times; (days in the reporting period &divide; 91.25)</strong>, summed by sub-type above. Unlike the earlier version of this report, this applies the full loss-per-victim figure to every detection with no discount for the fraction that would have plausibly succeeded &mdash; it mirrors Trend Micro's own internal reporting template rather than a probability-weighted estimate. Source for loss-per-victim figures: {{ ic3_source }}. Six TMES sub-types (Email Reputation Service, SPF Violation, Graymail, Scan Exception, Content Filtering, Attachment) have no IC3 category mapping in the source template and are shown as count-only. This is a directional figure for illustrating security value, not an audited financial-loss calculation. For a customer-specific, FAIR-model-based risk figure, use Vision One's Cyber Risk Quantification (CRQ) capability instead.</p>
+    </div>
+
+  </div>
+
+  <script>
+    function toggleDetails(btn) {
+      const panel = btn.closest('.card').querySelector('.details-panel');
+      const hidden = panel.hasAttribute('hidden');
+      if (hidden) { panel.removeAttribute('hidden'); btn.textContent = 'Hide details'; }
+      else { panel.setAttribute('hidden', ''); btn.textContent = 'Details'; }
+    }
+
+    function downloadReport() {
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelector('.report-toolbar').remove();
+      const html = '<!DOCTYPE html>\n' + clone.outerHTML;
+      const blob = new Blob([html], { type: 'text/html' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = "{{ data.customer_name.replace(' ', '_') }}_CEGP_report.html";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+  </script>
+</body>
+</html>

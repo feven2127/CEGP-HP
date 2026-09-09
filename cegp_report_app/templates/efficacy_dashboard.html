@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ data.customer_name }} — Efficacy Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:       #0f1117;
+    --surface:  #1a1d27;
+    --surface2: #22263a;
+    --border:   #2d3148;
+    --text:     #e2e8f0;
+    --muted:    #8892a4;
+    --accent:   #D71921;
+    --green:    #10b981;
+    --yellow:   #f59e0b;
+    --red:      #ef4444;
+    --orange:   #f97316;
+  }
+  body { font-family: 'Inter', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; line-height: 1.6; }
+  .app { display: flex; min-height: 100vh; }
+  .sidebar { width: 220px; min-height: 100vh; background: var(--surface); border-right: 1px solid var(--border); padding: 1.5rem 1rem; position: fixed; top: 0; left: 0; overflow-y: auto; }
+  .main { margin-left: 220px; padding: 2rem; max-width: 1200px; }
+  .sidebar-logo { display:flex; align-items:center; gap:10px; padding-bottom:1rem; border-bottom:1px solid var(--border); margin-bottom:1rem; }
+  .sidebar-logo .brand-name { font-size:15px; font-weight:700; color:var(--accent); letter-spacing:-.3px; line-height:1.2; }
+  .sidebar-logo .brand-sub { font-size:10px; color:var(--muted); }
+  .nav-item { display: flex; align-items: center; gap: 0.6rem; padding: 0.55rem 0.75rem; border-radius: 8px; color: var(--muted); font-size: 0.875rem; cursor: pointer; transition: all 0.15s; margin-bottom: 2px; text-decoration: none; }
+  .nav-item:hover, .nav-item.active { background: var(--surface2); color: var(--text); }
+  .nav-item.active { color: var(--accent); }
+  .nav-section { font-size: 0.7rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 1rem 0.75rem 0.4rem; margin-top: 0.5rem; }
+  .back-link { display:block; font-size:0.78rem; color:var(--muted); text-decoration:none; margin-top:1rem; padding-top:1rem; border-top:1px solid var(--border); }
+  .back-link:hover { color:var(--text); }
+  .page-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 2rem; padding-bottom: 1.5rem; border-bottom: 1px solid var(--border); }
+  .page-title { font-size: 1.5rem; font-weight: 700; letter-spacing: -0.5px; }
+  .page-meta { font-size: 0.8rem; color: var(--muted); margin-top: 4px; }
+  .header-actions { display: flex; gap: 0.75rem; }
+  .btn { padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.825rem; font-weight: 500; cursor: pointer; border: none; transition: all 0.15s; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: #b8151b; }
+  .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
+  .btn-outline:hover { background: var(--surface2); }
+  .score-section { display: grid; grid-template-columns: auto 1fr; gap: 2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 1.75rem; margin-bottom: 1.5rem; align-items: center; }
+  .score-donut { position: relative; width: 130px; height: 130px; flex-shrink: 0; }
+  .score-donut svg { transform: rotate(-90deg); }
+  .score-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; }
+  .score-number { font-size: 1.75rem; font-weight: 800; }
+  .score-pct { font-size: 0.7rem; color: var(--muted); }
+  .score-info h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.4rem; }
+  .score-info p { font-size: 0.85rem; color: var(--muted); max-width: 560px; }
+  .score-status { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.7rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
+  .powered { display:flex; align-items:center; gap:5px; margin-top:.75rem; padding-top:.75rem; border-top:1px solid var(--border); }
+  .powered-txt { font-size:11px; color:var(--muted); }
+  .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+  .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; position: relative; overflow: hidden; transition: border-color 0.15s; }
+  .kpi-card:hover { border-color: var(--accent); }
+  .kpi-card::before { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
+  .kpi-card.c-red::before   { background: var(--accent); }
+  .kpi-card.c-danger::before { background: var(--red); }
+  .kpi-card.c-orange::before { background: var(--orange); }
+  .kpi-card.c-purple::before { background: #8b5cf6; }
+  .kpi-val  { font-size: 2rem; font-weight: 800; letter-spacing: -1px; line-height: 1; margin-bottom: 0.3rem; }
+  .kpi-lbl  { font-size: 0.78rem; color: var(--muted); font-weight: 500; }
+  .kpi-card.c-red    .kpi-val { color: var(--accent); }
+  .kpi-card.c-danger .kpi-val { color: var(--red); }
+  .kpi-card.c-orange .kpi-val { color: var(--orange); }
+  .kpi-card.c-purple .kpi-val { color: #8b5cf6; }
+  .charts-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+  .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; }
+  .chart-title { font-size: 0.825rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 1rem; }
+  .section { margin-bottom: 1.75rem; }
+  .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+  .section-title { font-size: 1rem; font-weight: 600; display: flex; align-items: center; gap: 0.5rem; }
+  .section-title .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .event-table { width: 100%; border-collapse: collapse; }
+  .event-table tr { border-bottom: 1px solid var(--border); }
+  .event-table tr:last-child { border-bottom: none; }
+  .event-table td { padding: 0.5rem 0; font-size: 0.85rem; }
+  .ev-name  { color: var(--text); font-weight: 500; width: 40%; }
+  .ev-count { color: var(--accent); font-weight: 600; text-align: right; width: 15%; }
+  .ev-pct   { color: var(--muted); text-align: right; width: 10%; font-size: 0.78rem; }
+  .bar-wrap { background: var(--surface2); border-radius: 4px; height: 6px; width: 120px; }
+  .bar-fill { background: linear-gradient(90deg, var(--accent), var(--orange)); height: 6px; border-radius: 4px; }
+  .gap-filters { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .filter-btn { padding: 0.35rem 0.9rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); transition: all 0.15s; }
+  .filter-btn:hover, .filter-btn.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+  .gap-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 0.75rem; transition: border-color 0.15s; overflow: hidden; }
+  .gap-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; cursor: pointer; gap: 1rem; }
+  .gap-header:hover { background: var(--surface2); }
+  .gap-left  { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
+  .gap-right { display: flex; align-items: center; gap: 1rem; flex-shrink: 0; }
+  .priority-badge { font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 6px; flex-shrink: 0; }
+  .priority-badge.P1 { background: #3a1010; color: var(--red); border: 1px solid var(--red); }
+  .priority-badge.P2 { background: #3a2410; color: var(--orange); border: 1px solid var(--orange); }
+  .priority-badge.P3 { background: #3a3010; color: var(--yellow); border: 1px solid var(--yellow); }
+  .gap-title { font-size: 0.95rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .expand-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; padding: 0.3rem 0.7rem; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
+  .expand-btn:hover { color: var(--text); border-color: var(--accent); }
+  .gap-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid var(--border); display: none; }
+  .gap-section { margin-top: 1rem; }
+  .gap-label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
+  .gap-text { font-size: 0.875rem; color: var(--text); line-height: 1.6; }
+  .adv-headline { display:grid; grid-template-columns: repeat(3,1fr); gap:0.75rem; margin-bottom:1.2rem; }
+  .adv-headline-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:1rem; text-align:center; }
+  .adv-headline-val { font-size:1.8rem; font-weight:800; letter-spacing:-1px; color:var(--green); }
+  .adv-headline-lbl { font-size:0.72rem; color:var(--muted); margin-top:3px; }
+  .adv-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:1rem 1.2rem; margin-bottom:0.6rem; transition:border-color 0.15s; }
+  .adv-card:hover { border-color:var(--accent); }
+  .adv-card-inactive { opacity:0.55; }
+  .adv-top { display:flex; align-items:flex-start; gap:0.9rem; }
+  .adv-icon { font-size:1.6rem; flex-shrink:0; line-height:1.2; }
+  .adv-title-wrap { flex:1; min-width:0; }
+  .adv-title { font-size:0.9rem; font-weight:600; margin-bottom:0.25rem; }
+  .adv-desc { font-size:0.78rem; color:var(--muted); line-height:1.5; }
+  .adv-badge { flex-shrink:0; font-size:0.72rem; font-weight:700; padding:0.25rem 0.7rem; border-radius:999px; }
+  .adv-badge-active { background:#052e1a; color:var(--green); border:1px solid var(--green); }
+  .adv-badge-inactive { background:var(--surface2); color:var(--muted); border:1px solid var(--border); }
+  .adv-bar-wrap { background:var(--surface2); border-radius:4px; height:5px; width:180px; margin:0.6rem 0 0.3rem 2.5rem; }
+  .adv-bar-fill { background:linear-gradient(90deg,var(--green),#3b82f6); height:5px; border-radius:4px; }
+  .adv-count { font-size:0.75rem; color:var(--muted); margin-left:2.5rem; }
+  .empty-note { text-align:center; padding:2rem; color:var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
+  @media print { .sidebar, .header-actions, .gap-filters, .expand-btn { display: none !important; } .main { margin-left: 0; } .gap-body { display: block !important; } }
+  @media (max-width: 900px) { .sidebar { display: none; } .main { margin-left: 0; } .kpi-grid { grid-template-columns: repeat(2, 1fr); } .charts-grid { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <svg width="34" height="34" viewBox="0 0 100 100" aria-label="logo">
+        <rect width="100" height="100" rx="22" fill="#1e1e2e"/>
+        <path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/>
+        <polygon points="72,42 85,52 72,62" fill="#D71921"/>
+        <path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/>
+      </svg>
+      <div>
+        <div class="brand-name">CEGP Report</div>
+        <div class="brand-sub">Efficacy Dashboard</div>
+      </div>
+    </div>
+    <div class="nav-section">Report sections</div>
+    <a class="nav-item active" href="#overview">Overview</a>
+    <a class="nav-item" href="#coverage">Coverage Score</a>
+    <a class="nav-item" href="#trends">Event Trends</a>
+    <a class="nav-item" href="#detections">Detections</a>
+    <a class="nav-item" href="#gaps">Config Gaps</a>
+    <a class="nav-item" href="#posture">Security Posture</a>
+    <div class="nav-section">Gaps by priority</div>
+    <a class="nav-item" href="#gaps">P1 Critical ({{ data.config_gaps|selectattr('priority','equalto','P1')|list|length }})</a>
+    <a class="nav-item" href="#gaps">P2 High ({{ data.config_gaps|selectattr('priority','equalto','P2')|list|length }})</a>
+    <a class="nav-item" href="#gaps">P3 Medium ({{ data.config_gaps|selectattr('priority','equalto','P3')|list|length }})</a>
+    <a class="back-link" href="{{ url_for('index') }}">&larr; New report</a>
+  </aside>
+  <main class="main">
+    <div class="page-header" id="overview">
+      <div style="display:flex;align-items:center;gap:12px">
+        <svg width="40" height="40" viewBox="0 0 100 100" aria-label="logo">
+          <rect width="100" height="100" rx="22" fill="#1e1e2e"/>
+          <path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/>
+          <polygon points="72,42 85,52 72,62" fill="#D71921"/>
+          <path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/>
+        </svg>
+        <div>
+          <div class="page-title">Security Efficacy Report — {{ data.customer_name }}</div>
+          <div class="page-meta">Generated: {{ generated_on }} &nbsp;&middot;&nbsp; {{ data.period_start }} to {{ data.period_end }} &nbsp;&middot;&nbsp; Trend Vision One&trade;</div>
+        </div>
+      </div>
+      <div class="header-actions no-print">
+        <button class="btn btn-outline" onclick="window.print()">Print Report</button>
+        <button class="btn btn-primary" onclick="expandAll()">Expand All Gaps</button>
+        <button class="btn btn-outline" onclick="downloadDashboard()">Download HTML</button>
+      </div>
+    </div>
+
+    {% set status_color = {"Critical": "var(--red)", "Needs attention": "var(--orange)", "Good": "var(--green)", "Strong": "var(--green)", "Unknown": "var(--muted)"} %}
+    {% set dash_len = (data.block_rate / 100 * 326.7) if data.block_rate is not none else 0 %}
+    <div class="score-section" id="coverage">
+      <div class="score-donut">
+        <svg width="130" height="130" viewBox="0 0 130 130">
+          <circle cx="65" cy="65" r="52" fill="none" stroke="#22263a" stroke-width="14"/>
+          <circle cx="65" cy="65" r="52" fill="none" stroke="{{ status_color[data.coverage_status] }}" stroke-width="14" stroke-dasharray="{{ '%.1f'|format(dash_len) }} 326.7" stroke-linecap="round"/>
+        </svg>
+        <div class="score-center">
+          <div class="score-number" style="color:{{ status_color[data.coverage_status] }}">{{ "%.0f"|format(data.block_rate) + "%" if data.block_rate is not none else "N/A" }}</div>
+          <div class="score-pct">coverage</div>
+        </div>
+      </div>
+      <div class="score-info">
+        <div class="score-status" style="color:{{ status_color[data.coverage_status] }}; background: rgba(0,0,0,0.2); border:1px solid {{ status_color[data.coverage_status] }}">{{ data.coverage_status }}</div>
+        <h3>Security Coverage Score</h3>
+        <p>
+          {% if data.block_rate is not none %}
+          {{ "%.1f"|format(data.block_rate) }}% of tracked inbound mail this window was blocked at the gateway ({{ "{:,}".format(data.total_blocked) }} of {{ "{:,}".format(data.total_inbound) }} messages). This window recorded {{ "{:,}".format(data.total_detections) }} total detections, of which {{ "{:,}".format(data.detected_not_blocked) }} were logged in monitor mode rather than stopped. Review the configuration gaps below to strengthen enforcement.
+          {% else %}
+          Coverage can't be computed for this window because the scanned-volume lookup didn't return data (see the P1 configuration gap below). {{ "{:,}".format(data.total_blocked) }} threats were blocked regardless.
+          {% endif %}
+        </p>
+        <div class="powered">
+          <svg width="14" height="14" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#1e1e2e"/><path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/><polygon points="72,42 85,52 72,62" fill="#D71921"/><path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/></svg>
+          <span class="powered-txt">Trend Vision One&trade; &middot; Cloud Email Gateway Protection</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-grid">
+      <div class="kpi-card c-red"><div class="kpi-val">{{ "{:,}".format(data.total_detections) }}</div><div class="kpi-lbl">Total events detected</div></div>
+      <div class="kpi-card c-danger"><div class="kpi-val">{{ "{:,}".format(data.total_blocked) }}</div><div class="kpi-lbl">Threats blocked</div></div>
+      <div class="kpi-card c-orange"><div class="kpi-val">{{ "{:,}".format(data.detected_not_blocked) }}</div><div class="kpi-lbl">Detected, not blocked</div></div>
+      <div class="kpi-card c-purple"><div class="kpi-val">{{ data.config_gaps|length }}</div><div class="kpi-lbl">Configuration gaps found</div></div>
+    </div>
+
+    <div class="charts-grid" id="trends">
+      <div class="chart-card">
+        <div class="chart-title">Weekly event volume</div>
+        <div style="height:180px"><canvas id="trendChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Mail action breakdown</div>
+        <div style="height:180px"><canvas id="actionChart"></canvas></div>
+      </div>
+      <div class="chart-card">
+        <div class="chart-title">Detections by category</div>
+        <div style="height:180px"><canvas id="catChart"></canvas></div>
+      </div>
+    </div>
+
+    <div class="section" id="detections">
+      <div class="section-header">
+        <div class="section-title"><span class="dot"></span> Top detected event types</div>
+      </div>
+      {% if data.threats_by_type %}
+      <div class="chart-card">
+        <table class="event-table">
+          {% set max_ev = data.threats_by_type|map(attribute=1)|max %}
+          {% for name, count in data.threats_by_type %}
+          <tr>
+            <td class="ev-name">{{ name }}</td>
+            <td><div class="bar-wrap"><div class="bar-fill" style="width: {{ (count / max_ev * 100)|round(1) if max_ev else 0 }}%"></div></div></td>
+            <td class="ev-count">{{ "{:,}".format(count) }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </div>
+      {% else %}
+      <div class="empty-note">No detections in this window.</div>
+      {% endif %}
+    </div>
+
+    <div class="section" id="gaps">
+      <div class="section-header">
+        <div class="section-title"><span class="dot"></span> Configuration gaps and recommended actions</div>
+        <span style="font-size:0.8rem;color:var(--muted)">{{ data.config_gaps|length }} gap(s) found</span>
+      </div>
+      <div class="gap-filters no-print">
+        <button class="filter-btn active" onclick="filterGaps('all', this)">All ({{ data.config_gaps|length }})</button>
+        <button class="filter-btn" onclick="filterGaps('P1', this)">P1 Critical ({{ data.config_gaps|selectattr('priority','equalto','P1')|list|length }})</button>
+        <button class="filter-btn" onclick="filterGaps('P2', this)">P2 High ({{ data.config_gaps|selectattr('priority','equalto','P2')|list|length }})</button>
+        <button class="filter-btn" onclick="filterGaps('P3', this)">P3 Medium ({{ data.config_gaps|selectattr('priority','equalto','P3')|list|length }})</button>
+      </div>
+      <div id="gapList">
+        {% for gap in data.config_gaps %}
+        <div class="gap-card" data-priority="{{ gap.priority }}">
+          <div class="gap-header" onclick="toggleGap(this.querySelector('.expand-btn'))">
+            <div class="gap-left">
+              <span class="priority-badge {{ gap.priority }}">{{ gap.priority }}</span>
+              <span class="gap-title">{{ gap.title }}</span>
+            </div>
+            <div class="gap-right">
+              <button class="expand-btn" onclick="event.stopPropagation(); toggleGap(this)">Details</button>
+            </div>
+          </div>
+          <div class="gap-body">
+            <div class="gap-section">
+              <div class="gap-label">What we saw</div>
+              <div class="gap-text">{{ gap.detail }}</div>
+            </div>
+            <div class="gap-section">
+              <div class="gap-label">Recommended action</div>
+              <div class="gap-text">{{ gap.recommendation }}</div>
+            </div>
+          </div>
+        </div>
+        {% else %}
+        <div class="empty-note">No configuration gaps detected in this window.</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="section" id="posture">
+      <div class="section-header">
+        <div class="section-title"><span class="dot"></span> Security posture — Cloud Email Gateway Protection</div>
+      </div>
+      <p style="font-size:0.85rem;color:var(--muted);margin-bottom:1.2rem">
+        Every threat category CEGP is designed to catch, and how many events in this window fell into each. <strong style="color:var(--text)">Active</strong> badges confirm real protection value delivered this period; <em>Not observed</em> entries show layers that were available but saw no matching threats.
+      </p>
+      <div class="adv-headline">
+        <div class="adv-headline-card">
+          <div class="adv-headline-val">{{ "{:,}".format(data.total_blocked) }}</div>
+          <div class="adv-headline-lbl">Total threats stopped</div>
+        </div>
+        <div class="adv-headline-card">
+          <div class="adv-headline-val">{{ data.security_posture|selectattr('active')|list|length }} / {{ data.security_posture|length }}</div>
+          <div class="adv-headline-lbl">Active protection layers</div>
+        </div>
+        <div class="adv-headline-card">
+          <div class="adv-headline-val">{{ "%.1f"|format(data.block_rate) + "%" if data.block_rate is not none else "N/A" }}</div>
+          <div class="adv-headline-lbl">Of tracked mail stopped</div>
+        </div>
+      </div>
+      {% set max_posture = data.security_posture|map(attribute='count')|max %}
+      {% for p in data.security_posture %}
+      <div class="adv-card {{ '' if p.active else 'adv-card-inactive' }}">
+        <div class="adv-top">
+          <span class="adv-icon">{{ p.icon }}</span>
+          <div class="adv-title-wrap">
+            <div class="adv-title">{{ p.title }}</div>
+            <div class="adv-desc">{{ p.desc }}</div>
+          </div>
+          <span class="adv-badge {{ 'adv-badge-active' if p.active else 'adv-badge-inactive' }}">{{ 'Active' if p.active else 'Not observed' }}</span>
+        </div>
+        {% if p.active %}
+        <div class="adv-bar-wrap"><div class="adv-bar-fill" style="width: {{ (p.count / max_posture * 180)|round(0) if max_posture else 0 }}px"></div></div>
+        <div class="adv-count">{{ "{:,}".format(p.count) }} event(s) this window</div>
+        {% else %}
+        <div class="adv-count">No events in window</div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </main>
+</div>
+<script>
+Chart.defaults.color = '#8892a4';
+Chart.defaults.borderColor = '#2d3148';
+Chart.defaults.font.family = 'Inter, system-ui, sans-serif';
+
+new Chart(document.getElementById('trendChart'), {
+  type: 'bar',
+  data: {
+    labels: {{ data.weekly_counts|map(attribute=0)|list|tojson }},
+    datasets: [{ label: 'Events', data: {{ data.weekly_counts|map(attribute=1)|list|tojson }}, backgroundColor: 'rgba(215,25,33,0.6)', borderColor: '#D71921', borderWidth: 1, borderRadius: 4 }]
+  },
+  options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false } }, scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 8, font: { size: 10 } } }, y: { grid: { color: '#2d3148' }, ticks: { font: { size: 10 }, precision: 0 } } } }
+});
+
+new Chart(document.getElementById('actionChart'), {
+  type: 'doughnut',
+  data: {
+    labels: {{ data.mail_status_breakdown|map(attribute=0)|list|tojson }},
+    datasets: [{ data: {{ data.mail_status_breakdown|map(attribute=1)|list|tojson }}, backgroundColor: ["#ef4444", "#f97316", "#f59e0b", "#10b981"], borderWidth: 2, borderColor: '#1a1d27', hoverOffset: 6 }]
+  },
+  options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 8, font: { size: 10 } } } } }
+});
+
+new Chart(document.getElementById('catChart'), {
+  type: 'doughnut',
+  data: {
+    labels: {{ data.category_lines|map(attribute='category')|list|tojson }},
+    datasets: [{ data: {{ data.category_lines|map(attribute='count')|list|tojson }}, backgroundColor: ["#D71921","#f97316","#f59e0b","#10b981","#3b82f6","#8b5cf6","#ec4899","#14b8a6","#eab308","#6366f1","#ef4444","#22c55e"], borderWidth: 2, borderColor: '#1a1d27', hoverOffset: 6 }]
+  },
+  options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 8, font: { size: 10 } } } } }
+});
+
+function toggleGap(btn) {
+  const card = btn.closest('.gap-card');
+  const body = card.querySelector('.gap-body');
+  const open = body.style.display === 'block';
+  body.style.display = open ? 'none' : 'block';
+  btn.textContent = open ? 'Details' : 'Hide';
+}
+function expandAll() {
+  document.querySelectorAll('.gap-body').forEach(b => b.style.display = 'block');
+  document.querySelectorAll('.expand-btn').forEach(b => b.textContent = 'Hide');
+}
+function filterGaps(priority, clickedBtn) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  clickedBtn.classList.add('active');
+  document.querySelectorAll('.gap-card').forEach(card => {
+    card.style.display = (priority === 'all' || card.dataset.priority === priority) ? 'block' : 'none';
+  });
+}
+document.querySelectorAll('.nav-item').forEach(item => {
+  item.addEventListener('click', function(e) {
+    document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+    this.classList.add('active');
+    const href = this.getAttribute('href');
+    if (href && href.startsWith('#')) {
+      e.preventDefault();
+      const target = document.getElementById(href.substring(1));
+      if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+});
+function downloadDashboard() {
+  const clone = document.documentElement.cloneNode(true);
+  clone.querySelectorAll('.no-print').forEach(el => el.remove());
+  const html = '<!DOCTYPE html>\n' + clone.outerHTML;
+  const blob = new Blob([html], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = "{{ data.customer_name.replace(' ', '_') }}_CEGP_efficacy_dashboard.html";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+</script>
+</body>
+</html>

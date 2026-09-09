@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CEGP Executive Report Generator</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="shell">
+
+  <!-- Header -->
+  <div class="header">
+    <svg class="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <rect width="100" height="100" rx="22" fill="#1e1e2e"/>
+      <path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/>
+      <polygon points="72,42 85,52 72,62" fill="#D71921"/>
+      <path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/>
+    </svg>
+    <div>
+      <div class="brand-name">CEGP Report</div>
+      <div class="brand-sub">Executive Value &amp; Efficacy Reporter</div>
+    </div>
+  </div>
+
+  <!-- Customer + period -->
+  <div class="card">
+    <div class="card-title">Customer</div>
+    <div class="form-grid">
+      <div class="field">
+        <label>Customer name <span class="req">*</span></label>
+        <input id="customerName" type="text" placeholder="e.g. Acme Corporation" autocomplete="off">
+      </div>
+      <div class="field"></div>
+      <div class="field">
+        <label>Period start <span class="req">*</span></label>
+        <input id="periodStart" type="date">
+      </div>
+      <div class="field">
+        <label>Period end <span class="req">*</span></label>
+        <input id="periodEnd" type="date">
+      </div>
+    </div>
+  </div>
+
+  <!-- Data source -->
+  <div class="card">
+    <div class="card-title">Data source</div>
+    <div class="form-grid">
+      <div class="field full">
+        <label>Mode</label>
+        <div class="region-group" id="modeGroup">
+          <button class="region-btn active" data-mode="demo" onclick="pickMode(this)">Demo data</button>
+          <button class="region-btn" data-mode="live" onclick="pickMode(this)">Live Vision One API</button>
+          <button class="region-btn" data-mode="csv" onclick="pickMode(this)">Upload CSV</button>
+        </div>
+        <div class="field-hint" id="modeHint">Demo mode generates realistic sample detections instantly &mdash; no API key needed.</div>
+      </div>
+    </div>
+
+    <div id="liveFields" style="display:none; margin-top:1rem">
+      <div class="form-grid">
+        <div class="field">
+          <label>Region</label>
+          <div class="region-group" id="regionGroup">
+            <button class="region-btn active" data-region="us" onclick="pickRegion(this)">US</button>
+            <button class="region-btn" data-region="eu" onclick="pickRegion(this)">EU</button>
+            <button class="region-btn" data-region="sg" onclick="pickRegion(this)">SG</button>
+            <button class="region-btn" data-region="jp" onclick="pickRegion(this)">JP</button>
+            <button class="region-btn" data-region="au" onclick="pickRegion(this)">AU</button>
+            <button class="region-btn" data-region="in" onclick="pickRegion(this)">IN</button>
+            <button class="region-btn" data-region="mea" onclick="pickRegion(this)">MEA</button>
+          </div>
+        </div>
+        <div class="field full">
+          <label>Vision One API Token</label>
+          <div class="token-wrap">
+            <input id="apiToken" type="password" placeholder="Requires Search + Audit Logs permission" autocomplete="off">
+            <button class="eye-btn" type="button" onclick="toggleToken()" title="Show / hide">
+              <svg id="eyeIcon" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+              </svg>
+            </button>
+          </div>
+          <div class="field-hint">Never stored &mdash; used only for this run.</div>
+        </div>
+        <div class="field full">
+          <button type="button" class="test-btn" id="testConnBtn" onclick="testConnection()">Test API connection</button>
+          <span id="testConnStatus" class="test-status"></span>
+        </div>
+      </div>
+    </div>
+
+    <div id="csvFields" style="display:none; margin-top:1rem">
+      <div class="form-grid">
+        <div class="field full">
+          <label>Blocked-mail CSV export <span class="req">*</span></label>
+          <input id="csvFile" type="file" accept=".csv">
+          <div class="field-hint">Needs at least a threat/policy/filter-name column (e.g. "Threat", "Policy", "Filter Name"). Optional columns: action, time, sender, recipient, subject.</div>
+        </div>
+        <div class="field">
+          <label>Total inbound scanned <span class="field-hint" style="display:inline">(optional)</span></label>
+          <input id="csvTotalScanned" type="number" min="0" placeholder="e.g. 21827">
+        </div>
+        <div class="field">
+          <label>Delivered &amp; flagged <span class="field-hint" style="display:inline">(optional)</span></label>
+          <input id="csvDeliveredFlagged" type="number" min="0" placeholder="e.g. 340">
+        </div>
+        <div class="field">
+          <label>Restored from quarantine <span class="field-hint" style="display:inline">(optional)</span></label>
+          <input id="csvRestoreCount" type="number" min="0" placeholder="e.g. 5">
+        </div>
+        <div class="field"></div>
+        <div class="field-hint" style="grid-column: 1 / -1">These three are only available as separate CEGP exports (mail tracking / audit log) &mdash; enter them if you have the numbers, or leave blank to show block rate / false-positive rate as N/A.</div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="divider">
+
+  <button class="run-btn" id="runBtn" onclick="startRun()">
+    <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+      <polygon points="5 3 19 12 5 21 5 3"/>
+    </svg>
+    Generate executive report
+  </button>
+
+  <!-- Status panel -->
+  <div id="statusPanel" class="card" style="margin-top:1.4rem">
+    <div class="status-header">
+      <div class="status-dot" id="statusDot"></div>
+      <div class="status-label" id="statusLabel">Running…</div>
+    </div>
+    <div class="log-box" id="logBox"></div>
+    <div class="summary-grid" id="summaryGrid" style="display:none"></div>
+    <a id="openReportBtn" class="open-btn" style="display:none" target="_blank">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+      Open executive report in new tab
+    </a>
+    <a id="openDashboardBtn" class="open-btn open-btn-outline" style="display:none" target="_blank">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+        <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>
+      </svg>
+      Open efficacy report in new tab
+    </a>
+    <div id="errBox" class="err-box" style="display:none"></div>
+  </div>
+
+</div>
+
+<script>
+let currentJob = null;
+let pollTimer  = null;
+let selectedMode   = 'demo';
+let selectedRegion = 'us';
+
+const MODE_HINTS = {
+  demo: 'Demo mode generates realistic sample detections instantly &mdash; no API key needed.',
+  live: 'Pulls CEGP detections directly from Trend Vision One for the chosen period.',
+  csv: 'Use this when the Vision One API isn\'t reachable &mdash; upload a blocked-mail export instead.',
+};
+
+function pickMode(btn) {
+  document.querySelectorAll('#modeGroup .region-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  selectedMode = btn.dataset.mode;
+  document.getElementById('liveFields').style.display = selectedMode === 'live' ? 'block' : 'none';
+  document.getElementById('csvFields').style.display = selectedMode === 'csv' ? 'block' : 'none';
+  document.getElementById('modeHint').innerHTML = MODE_HINTS[selectedMode] || '';
+}
+
+function pickRegion(btn) {
+  document.querySelectorAll('#regionGroup .region-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  selectedRegion = btn.dataset.region;
+}
+
+function toggleToken() {
+  const inp = document.getElementById('apiToken');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+
+async function testConnection() {
+  const btn = document.getElementById('testConnBtn');
+  const status = document.getElementById('testConnStatus');
+  const apiToken = document.getElementById('apiToken').value.trim();
+
+  status.textContent = 'Testing…';
+  status.className = 'test-status pending';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/test-connection', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: apiToken, region: selectedRegion }),
+    });
+    const result = await resp.json();
+    status.textContent = result.message;
+    status.className = 'test-status ' + (result.ok ? 'ok' : 'fail');
+  } catch (err) {
+    status.textContent = 'Could not reach the server to test the connection.';
+    status.className = 'test-status fail';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function startRun() {
+  const customerName = document.getElementById('customerName').value.trim();
+  const periodStart  = document.getElementById('periodStart').value;
+  const periodEnd    = document.getElementById('periodEnd').value;
+  const apiToken     = document.getElementById('apiToken').value.trim();
+  const csvFileInput = document.getElementById('csvFile');
+  const csvFile      = csvFileInput.files[0];
+
+  if (!customerName) { alert('Customer name is required.'); return; }
+  if (!periodStart || !periodEnd) { alert('Period start and end are required.'); return; }
+  if (selectedMode === 'live' && !apiToken) { alert('An API key is required for a live Vision One pull.'); return; }
+  if (selectedMode === 'csv' && !csvFile) { alert('Choose a CSV file to upload.'); return; }
+
+  document.getElementById('runBtn').disabled = true;
+  document.getElementById('statusPanel').style.display = 'block';
+  document.getElementById('summaryGrid').style.display = 'none';
+  document.getElementById('openReportBtn').style.display = 'none';
+  document.getElementById('openDashboardBtn').style.display = 'none';
+  document.getElementById('errBox').style.display = 'none';
+  document.getElementById('logBox').innerHTML = '';
+  setStatus('running', 'Running…');
+
+  const body = new FormData();
+  body.append('customer_name', customerName);
+  body.append('period_start', periodStart);
+  body.append('period_end', periodEnd);
+  body.append('mode', selectedMode);
+  body.append('region', selectedRegion);
+  body.append('api_key', apiToken);
+  if (selectedMode === 'csv') {
+    body.append('csv_file', csvFile);
+    body.append('total_scanned', document.getElementById('csvTotalScanned').value.trim());
+    body.append('delivered_flagged_count', document.getElementById('csvDeliveredFlagged').value.trim());
+    body.append('restore_count', document.getElementById('csvRestoreCount').value.trim());
+  }
+
+  const resp = await fetch('/run', { method: 'POST', body });
+  const data = await resp.json();
+  if (data.error) {
+    setStatus('error', 'Failed to start');
+    showErr(data.error);
+    document.getElementById('runBtn').disabled = false;
+    return;
+  }
+  currentJob = data.job_id;
+  pollTimer  = setInterval(pollStatus, 1000);
+}
+
+async function pollStatus() {
+  if (!currentJob) return;
+  const resp = await fetch(`/status/${currentJob}`);
+  const job  = await resp.json();
+
+  const box = document.getElementById('logBox');
+  box.innerHTML = (job.log || []).map(line => {
+    let cls = 'log-line';
+    if (line.includes('[ERROR]')) cls += ' error';
+    else if (line.includes('[WARN]')) cls += ' warn';
+    else if (line.includes('Done') || line.includes('retrieved') || line.includes('generated')) cls += ' ok';
+    return `<span class="${cls}">${escHtml(line)}</span>`;
+  }).join('\n');
+  box.scrollTop = box.scrollHeight;
+
+  if (job.status === 'done') {
+    clearInterval(pollTimer);
+    setStatus('done', 'Report ready');
+    document.getElementById('runBtn').disabled = false;
+    showSummary(job.summary);
+    const btn = document.getElementById('openReportBtn');
+    btn.href = `/report/${currentJob}`;
+    btn.style.display = 'flex';
+    const dashBtn = document.getElementById('openDashboardBtn');
+    dashBtn.href = `/report/${currentJob}/dashboard`;
+    dashBtn.style.display = 'flex';
+  } else if (job.status === 'error') {
+    clearInterval(pollTimer);
+    setStatus('error', 'Failed');
+    document.getElementById('runBtn').disabled = false;
+    showErr(job.error || 'Unknown error — check log above.');
+  }
+}
+
+function setStatus(state, label) {
+  document.getElementById('statusDot').className = 'status-dot ' + state;
+  document.getElementById('statusLabel').textContent = label;
+}
+
+function showSummary(s) {
+  if (!s) return;
+  const grid = document.getElementById('summaryGrid');
+  grid.innerHTML = `
+    <div class="sum-card"><div class="sum-val">${s.total_blocked.toLocaleString()}</div><div class="sum-lbl">Threats blocked</div></div>
+    <div class="sum-card"><div class="sum-val" style="color:var(--green)">$${s.total_saved.toLocaleString()}</div><div class="sum-lbl">Est. value protected</div></div>
+    <div class="sum-card"><div class="sum-val">${s.block_rate !== null ? s.block_rate + '%' : 'N/A'}</div><div class="sum-lbl">Block rate</div></div>
+    <div class="sum-card"><div class="sum-val">${s.false_positive_rate !== null ? s.false_positive_rate + '%' : 'N/A'}</div><div class="sum-lbl">False-positive rate</div></div>
+  `;
+  grid.style.display = 'grid';
+}
+
+function showErr(msg) {
+  const box = document.getElementById('errBox');
+  box.textContent = msg;
+  box.style.display = 'block';
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>
