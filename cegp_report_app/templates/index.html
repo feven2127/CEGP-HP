@@ -33,13 +33,14 @@
       </div>
       <div class="field"></div>
       <div class="field">
-        <label>Period start <span class="req">*</span></label>
+        <label>Period start <span class="req period-req">*</span></label>
         <input id="periodStart" type="date">
       </div>
       <div class="field">
-        <label>Period end <span class="req">*</span></label>
+        <label>Period end <span class="req period-req">*</span></label>
         <input id="periodEnd" type="date">
       </div>
+      <div class="field-hint" id="periodHint" style="grid-column: 1 / -1; display:none">Optional for CSV uploads: leave empty to use the first and last dates found in the files, or set dates to report on part of them.</div>
     </div>
   </div>
 
@@ -94,12 +95,19 @@
     <div id="csvFields" style="display:none; margin-top:1rem">
       <div class="form-grid">
         <div class="field full">
-          <label>Blocked-mail CSV export <span class="req">*</span></label>
-          <input id="csvFile" type="file" accept=".csv">
-          <div class="field-hint">Needs at least a threat/policy/filter-name column (e.g. "Threat", "Policy", "Filter Name"). Optional columns: action, time, sender, recipient, subject.</div>
+          <label>CEGP log export(s) <span class="req">*</span></label>
+          <div class="dropzone" id="dropZone">
+            <input id="csvFile" type="file" accept=".csv,.tsv,.txt" multiple onchange="addFiles(this.files); this.value='';">
+            <div class="dropzone-text"><b>Drop CSV files here</b> or <span class="dropzone-link" onclick="document.getElementById('csvFile').click()">browse</span>. Add as many as you need, from different folders and in several goes.</div>
+          </div>
+          <div class="file-list" id="fileList"></div>
+          <div class="field-hint">For each file, choose its <b>log type</b> and <b>direction</b>:<br>
+            <b>Policy event log</b> (Threat Type / Rule Name / Action) drives the threat breakdown and value figures. <b>Mail tracking log</b> (Timestamp / Sender / Recipient / Last Action) supplies total mail volume, delivered-but-flagged and released counts.<br>
+            <b>Incoming</b> mail feeds the threats-blocked, block-rate and potential-loss figures. <b>Outgoing</b> mail is reported in its own Outbound section (threats sent from the customer's domain often mean a compromised account or a data leak) and is not added to the inbound figures.<br>
+            If a file has a direction column, only rows matching the chosen direction are used. Rows outside the selected period are ignored.</div>
         </div>
         <div class="field">
-          <label>Total inbound scanned <span class="field-hint" style="display:inline">(optional)</span></label>
+          <label>Delivered (accepted) mail <span class="field-hint" style="display:inline">(optional)</span></label>
           <input id="csvTotalScanned" type="number" min="0" placeholder="e.g. 21827">
         </div>
         <div class="field">
@@ -111,7 +119,7 @@
           <input id="csvRestoreCount" type="number" min="0" placeholder="e.g. 5">
         </div>
         <div class="field"></div>
-        <div class="field-hint" style="grid-column: 1 / -1">These three are only available as separate CEGP exports (mail tracking / audit log) &mdash; enter them if you have the numbers, or leave blank to show block rate / false-positive rate as N/A.</div>
+        <div class="field-hint" style="grid-column: 1 / -1">Optional overrides. Leave blank to use the figures from the uploaded mail tracking log; fill in to override them (or to supply them when you only have a policy event log).</div>
       </div>
     </div>
   </div>
@@ -159,7 +167,7 @@ let selectedRegion = 'us';
 const MODE_HINTS = {
   demo: 'Demo mode generates realistic sample detections instantly &mdash; no API key needed.',
   live: 'Pulls CEGP detections directly from Trend Vision One for the chosen period.',
-  csv: 'Use this when the Vision One API isn\'t reachable &mdash; upload a blocked-mail export instead.',
+  csv: 'Use this when the Vision One API isn\'t reachable &mdash; upload policy event and/or mail tracking exports instead.',
 };
 
 function pickMode(btn) {
@@ -168,6 +176,8 @@ function pickMode(btn) {
   selectedMode = btn.dataset.mode;
   document.getElementById('liveFields').style.display = selectedMode === 'live' ? 'block' : 'none';
   document.getElementById('csvFields').style.display = selectedMode === 'csv' ? 'block' : 'none';
+  document.getElementById('periodHint').style.display = selectedMode === 'csv' ? 'block' : 'none';
+  document.querySelectorAll('.period-req').forEach(el => el.style.display = selectedMode === 'csv' ? 'none' : 'inline');
   document.getElementById('modeHint').innerHTML = MODE_HINTS[selectedMode] || '';
 }
 
@@ -207,18 +217,70 @@ async function testConnection() {
   }
 }
 
+// ---- multi-file picker: files accumulate across picks / drops ----
+let pickedFiles = [];   // [{file, kind, direction}] -- kind/direction chosen by the user
+
+function addFiles(fileList) {
+  for (const f of Array.from(fileList)) {
+    if (!pickedFiles.some(p => p.file.name === f.name && p.file.size === f.size && p.file.lastModified === f.lastModified)) {
+      pickedFiles.push({ file: f, kind: '', direction: '' });
+    }
+  }
+  renderFileList();
+}
+
+function removeFile(i) { pickedFiles.splice(i, 1); renderFileList(); }
+function clearFiles() { pickedFiles = []; renderFileList(); }
+function setFileOpt(i, key, value) { pickedFiles[i][key] = value; renderFileList(); }
+
+function fmtSize(n) {
+  return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+}
+
+function optSelect(i, key, value, options) {
+  const opts = options.map(([v, label]) => `<option value="${v}"${v === value ? ' selected' : ''}>${label}</option>`).join('');
+  return `<select class="file-opt${value ? '' : ' file-opt-missing'}" onchange="setFileOpt(${i}, '${key}', this.value)">${opts}</select>`;
+}
+
+function renderFileList() {
+  const box = document.getElementById('fileList');
+  if (!pickedFiles.length) { box.innerHTML = ''; return; }
+  const total = pickedFiles.reduce((s, p) => s + p.file.size, 0);
+  const missing = pickedFiles.filter(p => !p.kind || !p.direction).length;
+  box.innerHTML = pickedFiles.map((p, i) =>
+    `<div class="file-row"><span class="file-name">${escHtml(p.file.name)}</span>` +
+    optSelect(i, 'kind', p.kind, [['', 'Log type…'], ['policy_events', 'Policy event log'], ['mail_tracking', 'Mail tracking log']]) +
+    optSelect(i, 'direction', p.direction, [['', 'Direction…'], ['inbound', 'Incoming'], ['outbound', 'Outgoing']]) +
+    `<span class="file-size">${fmtSize(p.file.size)}</span>` +
+    `<button type="button" class="file-remove" onclick="removeFile(${i})" title="Remove">&times;</button></div>`
+  ).join('') +
+  `<div class="file-summary">${pickedFiles.length} file(s), ${fmtSize(total)} &mdash; consolidated into one executive report and one efficacy report` +
+  ` <button type="button" class="file-clear" onclick="clearFiles()">Clear all</button></div>` +
+  (missing ? `<div class="file-summary file-summary-warn">Choose a log type and direction for ${missing} file(s) before generating.</div>` : '');
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const zone = document.getElementById('dropZone');
+  ['dragenter', 'dragover'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag'); }));
+  ['dragleave', 'drop'].forEach(ev => zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag'); }));
+  zone.addEventListener('drop', e => addFiles(e.dataTransfer.files));
+});
+
 async function startRun() {
   const customerName = document.getElementById('customerName').value.trim();
   const periodStart  = document.getElementById('periodStart').value;
   const periodEnd    = document.getElementById('periodEnd').value;
   const apiToken     = document.getElementById('apiToken').value.trim();
-  const csvFileInput = document.getElementById('csvFile');
-  const csvFile      = csvFileInput.files[0];
+  const csvFiles     = pickedFiles;
 
   if (!customerName) { alert('Customer name is required.'); return; }
-  if (!periodStart || !periodEnd) { alert('Period start and end are required.'); return; }
+  if (selectedMode !== 'csv' && (!periodStart || !periodEnd)) { alert('Period start and end are required for live API and demo runs.'); return; }
   if (selectedMode === 'live' && !apiToken) { alert('An API key is required for a live Vision One pull.'); return; }
-  if (selectedMode === 'csv' && !csvFile) { alert('Choose a CSV file to upload.'); return; }
+  if (selectedMode === 'csv' && !csvFiles.length) { alert('Choose at least one CSV file to upload.'); return; }
+  if (selectedMode === 'csv' && csvFiles.some(p => !p.kind || !p.direction)) {
+    alert('For each file, choose whether it is a policy event log or a mail tracking log, and whether it is incoming or outgoing mail.');
+    return;
+  }
 
   document.getElementById('runBtn').disabled = true;
   document.getElementById('statusPanel').style.display = 'block';
@@ -237,7 +299,11 @@ async function startRun() {
   body.append('region', selectedRegion);
   body.append('api_key', apiToken);
   if (selectedMode === 'csv') {
-    body.append('csv_file', csvFile);
+    csvFiles.forEach(p => {
+      body.append('csv_file', p.file);
+      body.append('csv_kind', p.kind);
+      body.append('csv_direction', p.direction);
+    });
     body.append('total_scanned', document.getElementById('csvTotalScanned').value.trim());
     body.append('delivered_flagged_count', document.getElementById('csvDeliveredFlagged').value.trim());
     body.append('restore_count', document.getElementById('csvRestoreCount').value.trim());

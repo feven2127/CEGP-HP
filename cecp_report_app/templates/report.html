@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ data.customer_name }} — Email &amp; Collaboration Protection Report</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+  <div class="report-toolbar no-print">
+    <a href="{{ url_for('index') }}">&larr; New report</a>
+    <button onclick="downloadReport()">Download HTML</button>
+  </div>
+
+  <div class="shell">
+
+    <!-- Header -->
+    <div class="header">
+      <svg class="logo-mark" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <rect width="100" height="100" rx="22" fill="#1e1e2e"/>
+        <path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/>
+        <polygon points="72,42 85,52 72,62" fill="#D71921"/>
+        <path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/>
+      </svg>
+      <div>
+        <div class="brand-name">{{ data.customer_name }}</div>
+        <div class="brand-sub">Email &amp; Collaboration Protection Report &middot; {{ data.period_start }} to {{ data.period_end }}</div>
+      </div>
+    </div>
+
+    <!-- Potential loss avoided -->
+    <div class="card">
+      <div class="card-title">Potential loss avoided this period</div>
+      <div class="balance-figure">${{ "{:,.0f}".format(data.total_saved) }}</div>
+      <div class="balance-sub">Based on {{ "{:,}".format(data.total_remediated) }} threats that Cloud Email and Collaboration Protection removed from mailboxes and collaboration apps, valued using FBI IC3 loss-per-victim figures (methodology below). Generated {{ generated_on }}.</div>
+    </div>
+
+    <div class="card">
+      <div class="stat-row">
+        <div class="stat-cell">
+          <div class="num">{{ "{:,}".format(data.total_remediated) }}</div>
+          <div class="lbl">Threats remediated</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ data.services_with_detections }}</div>
+          <div class="lbl">Services with threats stopped</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ "{:,}".format(data.unique_users) }}</div>
+          <div class="lbl">Users protected</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Services -->
+    {% if data.service_breakdown %}
+    <div class="card">
+      <div class="card-title">Threats by protected service</div>
+      <table class="sample-table">
+        <thead>
+          <tr><th>Service</th><th>Channel</th><th>Detections</th><th>Share</th><th>Remediated</th><th>Top threat</th></tr>
+        </thead>
+        <tbody>
+          {% for row in data.service_breakdown %}
+          <tr>
+            <td>{{ row.service }}</td>
+            <td>{{ row.channel }}</td>
+            <td>{{ "{:,}".format(row.detections) }}</td>
+            <td>{{ "{:.1f}%".format(row.share) }}</td>
+            <td>{{ "{:,}".format(row.remediated) }}</td>
+            <td>{{ row.top_category }}</td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td><strong>Total</strong></td><td></td>
+            <td><strong>{{ "{:,}".format(data.total_detections - data.simulation_excluded) }}</strong></td>
+            <td>100%</td>
+            <td><strong>{{ "{:,}".format(data.total_remediated) }}</strong></td><td></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="efficacy-note">{{ "{:,}".format(data.email_detections) }} detections came from mailboxes and {{ "{:,}".format(data.collab_detections) }} from collaboration apps. CECP connects to these services through their own APIs, so it also catches threats that arrive by internal mail, file sharing and chat, which an email gateway never sees.</p>
+    </div>
+    {% endif %}
+
+    <!-- Remediation status -->
+    <div class="card">
+      <div class="card-title">Detections by outcome</div>
+      {% set max_count = data.status_breakdown|map(attribute=1)|max %}
+      <div class="bar-chart">
+        {% for label, count in data.status_breakdown %}
+        <div class="bar-chart-row">
+          <div class="bar-chart-label">{{ label }}</div>
+          <div class="bar-chart-track">
+            <div class="bar-chart-fill{% if loop.first %} bar-chart-fill--top{% endif %}" style="width: {{ (count / max_count * 100)|round(1) if max_count else 0 }}%"></div>
+          </div>
+          <div class="bar-chart-value">{{ "{:,}".format(count) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+      {% if data.action_breakdown %}
+      <div class="sub-h">Actions taken</div>
+      {% for action, count in data.action_breakdown %}
+      <div class="ledger-row">
+        <span class="name">{{ action }}</span><span class="leader"></span>
+        <span class="count">{{ "{:,}".format(count) }}&times;</span><span class="amount"></span>
+      </div>
+      {% endfor %}
+      {% endif %}
+      <p class="efficacy-note">"Remediated" means CECP quarantined, deleted, blocked, moved to junk or replaced the item. "Not remediated" means the matching policy only logged it, so the item stayed with the user.</p>
+      {% if data.sandbox_clean or data.sandbox_malicious or data.unscannable %}
+      <p class="efficacy-note">Sandbox activity, not counted as threats above: {{ "{:,}".format(data.sandbox_clean + data.sandbox_malicious) }} URLs and files were analysed in the Virtual Analyzer sandbox, and {{ "{:,}".format(data.sandbox_malicious) }} were found malicious.{% if data.unscannable %} {{ "{:,}".format(data.unscannable) }} unscannable files or URLs (protected or oversized) were passed per policy.{% endif %}</p>
+      {% endif %}
+    </div>
+
+    <!-- Ledger -->
+    <div class="card">
+      <div class="card-title">Potential loss ledger, by threat type</div>
+      {% for line in data.category_lines %}
+      <div class="ledger-row">
+        <span class="name">{{ line.category }}{% if not line.cost_mapped %} <span style="color:var(--muted); font-size:0.75em;">(not cost-mapped)</span>{% endif %}</span>
+        <span class="leader"></span>
+        <span class="count">{{ "{:,}".format(line.count) }}&times;</span>
+        <span class="amount">{{ "${:,.0f}".format(line.subtotal) if line.cost_mapped else "—" }}</span>
+      </div>
+      {% else %}
+      <p class="efficacy-note">No remediated detections in this period.</p>
+      {% endfor %}
+    </div>
+
+    <!-- How valued -->
+    <div class="card">
+      <div class="card-title">How each threat type is valued</div>
+      <table class="sample-table">
+        <thead>
+          <tr><th>Threat type</th><th>IC3 category</th><th>Loss per victim</th><th>Value per detection (period-scaled)</th></tr>
+        </thead>
+        <tbody>
+          {% for line in data.category_lines %}
+          <tr>
+            <td>{{ line.category }}</td>
+            <td>{{ line.ic3_category if line.cost_mapped else "— (not cost-mapped)" }}</td>
+            <td>{{ "${:,.2f}".format(line.loss_per_victim) if line.cost_mapped else "—" }}</td>
+            <td>{{ "${:,.2f}".format(line.unit_value) if line.cost_mapped else "—" }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="efficacy-note">Value per detection = IC3 loss-per-victim &times; (days in reporting period &divide; 91.25, an average quarter). Source: {{ ic3_source }}. IC3 mapping: BEC &rarr; C1 BEC; Account Compromise &rarr; C2 Computer Intrusion; Advanced Threat (Sandbox) &rarr; C3 Corporate Data Breach; Malware &rarr; C7; Phishing, Malicious URL and Spam &rarr; C8 Phishing/Spoofing; Ransomware &rarr; C9; Data Loss Prevention &rarr; C11 Extortion (DLP). {{ unmapped_subtypes|join(", ") }} are counted but not valued.</p>
+    </div>
+
+    <!-- Top 10 -->
+    {% if data.threats_by_type %}
+    <div class="card">
+      <div class="card-title">Top 10 detections</div>
+      <div class="bar-chart">
+        {% set max_count = data.threats_by_type|map(attribute=1)|max %}
+        {% for name, count in data.threats_by_type %}
+        <div class="bar-chart-row">
+          <div class="bar-chart-label">{{ name }}</div>
+          <div class="bar-chart-track">
+            <div class="bar-chart-fill{% if loop.first %} bar-chart-fill--top{% endif %}" style="width: {{ (count / max_count * 100)|round(1) if max_count else 0 }}%"></div>
+          </div>
+          <div class="bar-chart-value">{{ "{:,}".format(count) }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Efficacy -->
+    <div class="card">
+      <div class="card-title">Detection efficacy</div>
+      <div class="stat-row" style="margin-bottom: 1.2rem">
+        <div class="stat-cell">
+          <div class="num">{{ "{:,.1f}%".format(data.remediation_rate) if data.remediation_rate is not none else "N/A" }}</div>
+          <div class="lbl">Remediation rate ({{ "{:,}".format(data.total_remediated) }} of {{ "{:,}".format(data.total_detections - data.simulation_excluded) }} detections acted on)</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ "{:,.2f}%".format(data.email_prevalence) if data.email_prevalence is not none else "N/A" }}</div>
+          <div class="lbl">Email threat prevalence{% if data.emails_scanned %} ({{ "{:,}".format(data.email_detections) }} of {{ "{:,}".format(data.emails_scanned) }} scanned){% endif %}</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ "{:,.2f}%".format(data.false_positive_rate) if data.false_positive_rate is not none else "N/A" }}</div>
+          <div class="lbl">False-positive rate{% if data.restore_count is not none %} ({{ "{:,}".format(data.restore_count) }} restored){% endif %}</div>
+        </div>
+      </div>
+      {% if data.files_scanned %}
+      <p class="efficacy-note" style="margin-top:0">Collaboration apps: {{ "{:,}".format(data.collab_detections) }} detections in {{ "{:,}".format(data.files_scanned) }} files scanned ({{ "{:,.3f}%".format(data.collab_prevalence) }}).</p>
+      {% endif %}
+      <div class="sub-h">Share of scanned items, by threat type</div>
+      {% for line in data.category_lines %}
+      <div class="ledger-row">
+        <span class="name">{{ line.category }}</span><span class="leader"></span>
+        <span class="count">{{ "{:,}".format(line.count) }}&times;</span>
+        <span class="amount">{{ "{:,.3f}%".format(line.prevalence) if line.prevalence is not none else "N/A" }}</span>
+      </div>
+      {% endfor %}
+      <p class="efficacy-note">Remediation rate = detections CECP acted on &divide; all live detections; a low rate means policies are in log-only mode. Threat prevalence = detections &divide; items scanned. False-positive rate = items restored from quarantine &divide; items remediated. This is a lower bound, because not every wrongly quarantined item gets restored.</p>
+    </div>
+
+    <!-- Daily volume -->
+    {% if data.daily_counts %}
+    <div class="card">
+      <div class="card-title">Daily detection volume</div>
+      <div class="trend-bars">
+        {% set max_count = data.daily_counts|map(attribute=1)|max %}
+        {% for day, count in data.daily_counts %}
+        <div class="trend-bar" style="height: {{ (count / max_count * 100)|round(1) if max_count else 0 }}%" title="{{ day }}: {{ count }}"></div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Targeted users -->
+    {% if data.top_users or data.sample_detections %}
+    <div class="card">
+      <div class="card-title">Most targeted users</div>
+      {% for user, count in data.top_users %}
+      <div class="recipient-row"><span>{{ user }}</span><span class="count">{{ count }} remediated</span></div>
+      {% endfor %}
+      {% if data.top_files %}
+      <div class="sub-h">Most detected files</div>
+      {% for name, count in data.top_files %}
+      <div class="recipient-row"><span>{{ name }}</span><span class="count">{{ count }}&times;</span></div>
+      {% endfor %}
+      {% endif %}
+      {% if data.sample_detections %}
+      <div class="card-footer"><button class="details-btn" onclick="toggleDetails(this)">Details</button></div>
+      <div class="details-panel" hidden>
+        <div class="sub-h">Sample of remediated detections</div>
+        <table class="sample-table">
+          <thead><tr><th>Time</th><th>Service</th><th>Threat</th><th>User</th><th>Subject / file</th><th>Action</th></tr></thead>
+          <tbody>
+            {% for row in data.sample_detections %}
+            <tr><td>{{ row.time }}</td><td>{{ row.service }}</td><td>{{ row.threat }}</td><td>{{ row.user }}</td><td>{{ row.object }}</td><td>{{ row.action }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Methodology -->
+    <div class="card">
+      <div class="card-title">Methodology</div>
+      <p class="methodology-text">Data source: {{ data.data_source }}. Figures cover Trend Vision One Cloud Email and Collaboration Protection detections for the stated period, across mailboxes (Exchange Online, Gmail) and collaboration apps (OneDrive, SharePoint Online, Microsoft Teams, Box, Dropbox, Google Drive). Only <strong>remediated</strong> detections are valued, because a threat that was only logged was not prevented. <strong>Potential loss avoided = (remediated detections of a threat type) &times; (IC3 loss-per-victim for its category) &times; (days in the period &divide; 91.25)</strong>, summed by threat type. This is the same Potential Loss method as Trend Micro's TMES sheet and the CEGP report, so the two products' figures can be compared. Source for loss-per-victim figures: {{ ic3_source }}. This is a directional figure for illustrating security value, not an audited financial-loss calculation. For a customer-specific, FAIR-model-based risk figure, use Vision One's Cyber Risk Quantification (CRQ) capability instead.{% if data.simulation_excluded %} {{ "{:,}".format(data.simulation_excluded) }} simulation-mode detections were excluded.{% endif %}</p>
+    </div>
+
+  </div>
+
+  <script>
+    function toggleDetails(btn) {
+      const panel = btn.closest('.card').querySelector('.details-panel');
+      const hidden = panel.hasAttribute('hidden');
+      if (hidden) { panel.removeAttribute('hidden'); btn.textContent = 'Hide details'; }
+      else { panel.setAttribute('hidden', ''); btn.textContent = 'Details'; }
+    }
+    function downloadReport() {
+      const clone = document.documentElement.cloneNode(true);
+      clone.querySelector('.report-toolbar').remove();
+      const html = '<!DOCTYPE html>\n' + clone.outerHTML;
+      const blob = new Blob([html], { type: 'text/html' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = {{ (data.customer_name.replace(' ', '_') ~ '_CECP_report.html')|tojson }};
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+  </script>
+</body>
+</html>

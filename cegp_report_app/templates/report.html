@@ -75,6 +75,35 @@
       </div>
     </div>
 
+    <!-- Vision One-style threat breakdown -->
+    {% if data.console_breakdown %}
+    <div class="card">
+      <div class="card-title">Threats by Vision One category</div>
+      <table class="sample-table">
+        <thead>
+          <tr><th>Category</th><th>Detections</th><th>Share</th><th>Blocked</th></tr>
+        </thead>
+        <tbody>
+          {% for row in data.console_breakdown %}
+          <tr>
+            <td>{{ row.category }}</td>
+            <td>{{ "{:,}".format(row.detections) }}</td>
+            <td>{{ "{:.2f}%".format(row.share) }}</td>
+            <td>{{ "{:,}".format(row.blocked) }}</td>
+          </tr>
+          {% endfor %}
+          <tr>
+            <td><strong>Total</strong></td>
+            <td><strong>{{ "{:,}".format(data.console_total) }}</strong></td>
+            <td>100%</td>
+            <td><strong>{{ "{:,}".format(data.total_blocked) }}</strong></td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="efficacy-note">Uses the same category names as the Vision One console's Threats widget, so the two can be compared for the same period. "Detections" counts every detection whatever its action; "Blocked" counts only quarantined or blocked ones.{% if data.console_unique_messages %} These detections come from {{ "{:,}".format(data.console_unique_messages) }} distinct messages, since one message can trigger more than one rule.{% endif %}</p>
+    </div>
+    {% endif %}
+
     <!-- Value ledger -->
     <div class="card">
       <div class="card-title">Potential loss ledger, by TMES sub-type</div>
@@ -216,10 +245,49 @@
     </div>
     {% endif %}
 
+    <!-- Outbound mail (uploads marked "outgoing") -->
+    {% if data.outbound %}
+    {% set ob = data.outbound %}
+    <div class="card">
+      <div class="card-title">Outbound mail protection</div>
+      <div class="stat-row" style="margin-bottom: 1.2rem">
+        <div class="stat-cell">
+          <div class="num">{{ "{:,}".format(ob.messages_scanned) if ob.messages_scanned is not none else "N/A" }}</div>
+          <div class="lbl">Outgoing messages scanned</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ "{:,}".format(ob.detections) }}</div>
+          <div class="lbl">Outbound threats detected</div>
+        </div>
+        <div class="stat-cell">
+          <div class="num">{{ "{:,}".format(ob.blocked) }}</div>
+          <div class="lbl">Stopped before leaving the organization</div>
+        </div>
+      </div>
+      {% if ob.categories %}
+      <table class="sample-table">
+        <thead><tr><th>Threat type</th><th>Detections</th><th>Share</th><th>Blocked</th></tr></thead>
+        <tbody>
+          {% for c in ob.categories %}
+          <tr><td>{{ c.category }}</td><td>{{ "{:,}".format(c.detections) }}</td><td>{{ "{:.1f}%".format(c.share) }}</td><td>{{ "{:,}".format(c.blocked) }}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if ob.top_senders %}
+      <div class="sub-h">Internal senders with the most outbound detections</div>
+      {% for sender, count in ob.top_senders %}
+      <div class="recipient-row"><span>{{ sender }}</span><span class="count">{{ count }} detection(s)</span></div>
+      {% endfor %}
+      {% endif %}
+      <p class="efficacy-note">Outbound threats are messages sent from the organization's own domain that CEGP flagged. They often point to a compromised internal account, an infected device sending spam or malware, or sensitive data leaving the organization. They are reported here on their own and are not included in the inbound threats-blocked, block-rate or potential-loss figures above.{% if ob.not_blocked %} {{ "{:,}".format(ob.not_blocked) }} outbound detection(s) were logged but not blocked.{% endif %}</p>
+    </div>
+    {% endif %}
+
     <!-- Methodology -->
     <div class="card">
       <div class="card-title">Methodology</div>
-      <p class="methodology-text">Figures are drawn from Cloud Email Gateway Protection detection logs in Trend Vision One for the stated period, using Trend Micro's internal TMES sheet Potential Loss methodology: <strong>potential loss avoided = (detections in a TMES sub-type) &times; (IC3 loss-per-victim for that sub-type's category) &times; (days in the reporting period &divide; 91.25)</strong>, summed by sub-type above. Unlike the earlier version of this report, this applies the full loss-per-victim figure to every detection with no discount for the fraction that would have plausibly succeeded &mdash; it mirrors Trend Micro's own internal reporting template rather than a probability-weighted estimate. Source for loss-per-victim figures: {{ ic3_source }}. Six TMES sub-types (Email Reputation Service, SPF Violation, Graymail, Scan Exception, Content Filtering, Attachment) have no IC3 category mapping in the source template and are shown as count-only. This is a directional figure for illustrating security value, not an audited financial-loss calculation. For a customer-specific, FAIR-model-based risk figure, use Vision One's Cyber Risk Quantification (CRQ) capability instead.</p>
+      <p class="methodology-text">{% if data.data_source %}Data source: {{ data.data_source }}. {% endif %}Figures are drawn from Cloud Email Gateway Protection detection logs in Trend Vision One for the stated period, using Trend Micro's internal TMES sheet Potential Loss methodology: <strong>potential loss avoided = (detections in a TMES sub-type) &times; (IC3 loss-per-victim for that sub-type's category) &times; (days in the reporting period &divide; 91.25)</strong>, summed by sub-type above. Unlike the earlier version of this report, this applies the full loss-per-victim figure to every detection with no discount for the fraction that would have plausibly succeeded &mdash; it mirrors Trend Micro's own internal reporting template rather than a probability-weighted estimate. Source for loss-per-victim figures: {{ ic3_source }}. Six TMES sub-types (Email Reputation Service, SPF Violation, Graymail, Scan Exception, Content Filtering, Attachment) have no IC3 category mapping in the source template and are shown as count-only. This is a directional figure for illustrating security value, not an audited financial-loss calculation. For a customer-specific, FAIR-model-based risk figure, use Vision One's Cyber Risk Quantification (CRQ) capability instead.</p>
     </div>
 
   </div>

@@ -21,13 +21,22 @@ import datetime as dt
 import threading
 import uuid
 import logging
+from collections import Counter
 
 from flask import Flask, render_template, request, jsonify, Response
 
 from vision_one_client import VisionOneClient, VisionOneAPIError
-from report_builder import build_report_data
+from report_builder import build_outbound_summary, build_report_data
 from cost_reference import IC3_SOURCE
-from csv_import import parse_csv_detections
+from csv_import import (
+    DIRECTION_INBOUND,
+    DIRECTION_LABELS,
+    DIRECTION_OUTBOUND,
+    KIND_LABELS,
+    KIND_MAIL_TRACKING,
+    KIND_POLICY_EVENTS,
+    parse_csv_upload,
+)
 from mock_data import (
     generate_mock_detections,
     generate_mock_scanned_count,
@@ -43,7 +52,66 @@ log = logging.getLogger(__name__)
 jobs: dict[str, dict] = {}
 
 
+def _warn_period_vs_data(records, start_dt, end_dt, emit) -> None:
+    """Value per detection is scaled by the SELECTED period length (TMES
+    method), so a 30-day period over 4 days of data overstates the value
+    ~7.5x. Warn when the data covers much less than the period."""
+    days = sorted({(r.detected_time or "")[:10] for r in records if (r.detected_time or "")[:4].isdigit()})
+    if not days:
+        return
+    selected = (end_dt.date() - start_dt.date()).days + 1
+    covered = (dt.date.fromisoformat(days[-1]) - dt.date.fromisoformat(days[0])).days + 1
+    if covered < selected * 0.8:
+        emit(
+            f"[WARN] The data covers {covered} day(s) ({days[0]} to {days[-1]}) but the selected period is "
+            f"{selected} days. Value per detection scales with the selected period, so the value figure is "
+            f"about {selected / covered:.1f}x too high. Set the period to {days[0]} – {days[-1]} for an accurate value."
+        )
+
+
 # ---------------------------------------------------------------- pipeline
+
+def _parse_period(form: dict, mode: str):
+    """(start, end) datetimes from the form. Both are required for live API
+    and demo runs. For CSV uploads either may be left empty -- the missing
+    side is filled in from the uploaded data (see _fill_period_from_data)."""
+    def parse(key: str, end_of_day: bool = False):
+        value = (form.get(key) or "").strip()
+        if not value:
+            return None
+        try:
+            day = dt.datetime.strptime(value, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError(f"'{value}' isn't a valid date — use YYYY-MM-DD.")
+        return day + dt.timedelta(days=1, seconds=-1) if end_of_day else day
+
+    start, end = parse("period_start"), parse("period_end", end_of_day=True)
+    if mode != "csv" and (start is None or end is None):
+        raise ValueError("Period start and end are required for live API and demo runs.")
+    if start and end and end < start:
+        raise ValueError("Period end must be after period start.")
+    return start, end
+
+
+def _fill_period_from_data(start_dt, end_dt, uploads, emit):
+    """CSV mode: use the earliest / latest timestamp in the uploaded files
+    for whichever period date wasn't entered."""
+    if start_dt is not None and end_dt is not None:
+        return start_dt, end_dt
+    firsts = [u.first_time for u in uploads if u.first_time]
+    lasts = [u.last_time for u in uploads if u.last_time]
+    if not firsts or not lasts:
+        raise ValueError(
+            "No dates could be read from the uploaded files, so the report period can't be "
+            "worked out — enter a period start and end date."
+        )
+    if start_dt is None:
+        start_dt = dt.datetime.combine(min(firsts).date(), dt.time.min)
+    if end_dt is None:
+        end_dt = dt.datetime.combine(max(lasts).date(), dt.time(23, 59, 59))
+    emit(f"[Setup] Period taken from the uploaded data: {start_dt:%Y-%m-%d} to {end_dt:%Y-%m-%d}")
+    return start_dt, end_dt
+
 
 def run_report_job(job_id: str, form: dict):
     job_log: list[str] = []
@@ -56,24 +124,17 @@ def run_report_job(job_id: str, form: dict):
     with app.test_request_context():
         try:
             customer_name = (form.get("customer_name") or "").strip() or "Customer"
-            period_start_str = form.get("period_start")
-            period_end_str = form.get("period_end")
             mode = form.get("mode", "demo")
 
             emit(f"[Setup] Customer: {customer_name}")
 
-            try:
-                start_dt = dt.datetime.strptime(period_start_str, "%Y-%m-%d")
-                end_dt = dt.datetime.strptime(period_end_str, "%Y-%m-%d") + dt.timedelta(
-                    days=1, seconds=-1
-                )
-            except (TypeError, ValueError):
-                raise ValueError("Please provide a valid start and end date.")
-
-            if end_dt < start_dt:
-                raise ValueError("Period end must be after period start.")
-
-            emit(f"[Setup] Period: {period_start_str} to {period_end_str}")
+            start_dt, end_dt = _parse_period(form, mode)
+            outbound_summary = None
+            dates_given = start_dt is not None and end_dt is not None
+            if dates_given:
+                emit(f"[Setup] Period: {start_dt:%Y-%m-%d} to {end_dt:%Y-%m-%d}")
+            else:
+                emit("[Setup] No period entered — it will be taken from the dates in the uploaded files")
 
             if mode == "live":
                 api_key = (form.get("api_key") or "").strip()
@@ -82,21 +143,14 @@ def run_report_job(job_id: str, form: dict):
                     raise ValueError("An API key is required for a live Vision One pull.")
 
                 client = VisionOneClient(api_key=api_key, region=region)
+                data_source = f"Trend Vision One API ({region.upper()}), productCode:sem"
 
                 emit(f"[Vision One] Connecting to region '{region.upper()}'...")
                 emit("[Vision One] Pulling CEGP detections (search/detections)...")
-                try:
-                    expected_total = client.get_detection_count(start_dt, end_dt)
-                    if expected_total >= 10_000:
-                        emit(
-                            f"[Vision One] Vision One's own count reports at least {expected_total:,} "
-                            "detections for this period — note this count can itself be capped the same "
-                            "way paging is, so the real total may be higher. Splitting the period into "
-                            "smaller time windows to retrieve everything (this takes longer)..."
-                        )
-                except VisionOneAPIError:
-                    pass  # non-fatal -- the pull below will still be attempted
-                records = client.get_cegp_detections(start_dt, end_dt)
+                # The up-front countonly call was skipped: it only fed an
+                # advisory note and could stall the run for minutes before
+                # the first page was fetched. Paging logs progress instead.
+                records = client.get_cegp_detections(start_dt, end_dt, progress=emit)
                 emit(f"[Vision One] {len(records):,} CEGP detections retrieved")
 
                 try:
@@ -133,9 +187,18 @@ def run_report_job(job_id: str, form: dict):
                         emit(f"[Diagnose] Probe query failed too ({e.status_code}): {e.message}")
 
                 emit("[Vision One] Pulling scanned mail volume (search/emailActivities)...")
+                accepted_records = None
                 try:
-                    total_scanned = client.get_total_scanned_count(start_dt, end_dt)
-                    emit(f"[Vision One] {total_scanned:,} inbound messages scanned")
+                    # Fetch the accepted-mail records themselves (paged, with
+                    # progress) instead of trusting a countonly figure: this
+                    # gives real totals and shows the mailThreatType values.
+                    accepted_records = client.get_accepted_mail_records(start_dt, end_dt, progress=emit)
+                    total_scanned = len(accepted_records)
+                    emit(f"[Vision One] {total_scanned:,} inbound messages scanned (fetched records)")
+                    threat_values = Counter(
+                        r.get("mailThreatType") or "(none)" for r in accepted_records
+                    )
+                    emit(f"[Diagnose] mailThreatType values seen: {dict(threat_values.most_common(10))}")
                     try:
                         total_sem_activity = client.get_total_sem_email_activity_count(start_dt, end_dt)
                         if total_sem_activity > total_scanned:
@@ -163,7 +226,12 @@ def run_report_job(job_id: str, form: dict):
 
                 emit("[Vision One] Pulling mail tracking log (delivered-but-flagged mail)...")
                 try:
-                    delivered_flagged_count = client.get_delivered_flagged_count(start_dt, end_dt)
+                    if accepted_records is not None:
+                        delivered_flagged_count = sum(
+                            1 for r in accepted_records if r.get("mailThreatType")
+                        )
+                    else:
+                        delivered_flagged_count = client.get_delivered_flagged_count(start_dt, end_dt)
                     emit(f"[Vision One] {delivered_flagged_count:,} delivered messages flagged (spam/graymail)")
                 except VisionOneAPIError as e:
                     delivered_flagged_count = None
@@ -177,32 +245,135 @@ def run_report_job(job_id: str, form: dict):
                     restore_count = None
                     emit(f"[WARN] Audit-log lookup failed ({e.status_code}) — false-positive rate will show as N/A")
             elif mode == "csv":
-                emit("[CSV] Parsing uploaded detection export...")
-                records = parse_csv_detections(form.get("csv_bytes") or b"")
-                emit(f"[CSV] {len(records):,} detection rows parsed")
-                if len(records) == 0:
-                    raise ValueError(
-                        "No usable rows found in the CSV — check that it has a "
-                        "threat/policy name column with values."
+                csv_files = form.get("csv_files") or []
+                emit(f"[CSV] Parsing {len(csv_files)} uploaded file(s)...")
+                seen: set = set()  # shared across files -> cross-file de-duplication
+                uploads: list = []
+                total_duplicates = 0
+                kinds = Counter()
+                # Incoming and outgoing files are processed separately: only
+                # incoming mail feeds the inbound figures and the IC3 value.
+                sides = {
+                    d: {"policy": [], "tracking_records": [], "tracking": None, "files": 0}
+                    for d in (DIRECTION_INBOUND, DIRECTION_OUTBOUND)
+                }
+                for filename, raw_bytes, kind, direction in csv_files:
+                    try:
+                        upload = parse_csv_upload(
+                            raw_bytes, filename, start_dt, end_dt, seen, kind=kind, direction=direction
+                        )
+                    except ValueError as e:
+                        raise ValueError(f"{filename}: {e}") from e
+                    uploads.append(upload)
+                    dir_label = DIRECTION_LABELS[direction]
+                    span = ""
+                    if upload.first_time and upload.last_time:
+                        span = f", {upload.first_time:%Y-%m-%d} to {upload.last_time:%Y-%m-%d}"
+                    emit(f"[CSV] {filename}: {dir_label} {upload.kind_label} — {upload.rows_read:,} rows read{span}")
+                    if upload.detected_kind and upload.detected_kind != upload.kind:
+                        emit(
+                            f"[WARN]   {filename} was marked as a {upload.kind_label} but its columns look like a "
+                            f"{KIND_LABELS[upload.detected_kind]} — processed as marked; check the selection if the figures look wrong"
+                        )
+                    if upload.other_direction_skipped:
+                        other = DIRECTION_LABELS[DIRECTION_OUTBOUND if direction == DIRECTION_INBOUND else DIRECTION_INBOUND]
+                        emit(f"[CSV]   {upload.other_direction_skipped:,} {other} row(s) in this file excluded (file marked {dir_label})")
+                    elif not upload.has_direction_column:
+                        emit(f"[CSV]   No direction column — every row treated as {dir_label}")
+                    if upload.rows_outside_period:
+                        emit(f"[CSV]   {upload.rows_outside_period:,} row(s) outside the selected period skipped")
+                    if upload.duplicates:
+                        emit(f"[CSV]   {upload.duplicates:,} row(s) already seen in an earlier file skipped (duplicate)")
+                    total_duplicates += upload.duplicates
+                    kinds[f"{dir_label} {upload.kind_label}"] += 1
+                    side = sides[direction]
+                    side["files"] += 1
+                    if upload.kind == KIND_MAIL_TRACKING:
+                        t = upload.tracking
+                        emit(
+                            f"[CSV]   {t.total_rows:,} {dir_label} messages: {t.delivered:,} delivered "
+                            f"({t.delivered_flagged:,} flagged), {t.blocked:,} blocked/quarantined, "
+                            f"{t.restored:,} released/restored, {t.other:,} other (bounced/deferred)"
+                        )
+                        emit(f"[Diagnose] Status values seen: {dict(t.status_counts.most_common(10))}")
+                        side["tracking_records"].extend(upload.records)
+                        if side["tracking"] is None:
+                            side["tracking"] = upload.tracking
+                        else:
+                            side["tracking"].merge(upload.tracking)
+                    else:
+                        emit(f"[CSV]   {len(upload.records):,} policy events")
+                        side["policy"].extend(upload.records)
+
+                emit(
+                    f"[CSV] Consolidated {len(csv_files)} file(s) ("
+                    + ", ".join(f"{n} {k}" for k, n in kinds.items())
+                    + f") into one data set; {total_duplicates:,} duplicate row(s) removed"
+                )
+                data_source = (
+                    f"{len(csv_files)} uploaded CEGP export(s), consolidated and de-duplicated: "
+                    + ", ".join(f"{name} ({DIRECTION_LABELS[d]} {KIND_LABELS[k]})" for name, _, k, d in csv_files)
+                )
+
+                inbound = sides[DIRECTION_INBOUND]
+                tracking = inbound["tracking"]
+                if inbound["policy"]:
+                    records = inbound["policy"]
+                    emit(f"[CSV] Incoming: using {len(records):,} policy events as the detection source")
+                else:
+                    records = inbound["tracking_records"]
+                    if inbound["files"]:
+                        emit(
+                            f"[CSV] Incoming: no policy event log uploaded — using {len(records):,} blocked "
+                            "rows from mail tracking as the detection source"
+                        )
+                    else:
+                        emit("[WARN] No incoming files uploaded — the inbound sections of the report will be empty")
+
+                outbound = sides[DIRECTION_OUTBOUND]
+                if outbound["files"]:
+                    out_records = outbound["policy"] or outbound["tracking_records"]
+                    outbound_summary = build_outbound_summary(out_records, outbound["tracking"])
+                    emit(
+                        f"[CSV] Outgoing: {outbound_summary['detections']:,} threat detection(s), "
+                        f"{outbound_summary['blocked']:,} blocked"
+                        + (f", {outbound_summary['messages_scanned']:,} outgoing messages tracked"
+                           if outbound_summary["messages_scanned"] is not None else "")
+                        + " — reported separately, not added to inbound figures or the value estimate"
                     )
 
-                def _optional_count(key: str, label: str) -> int | None:
+                if not records and tracking is None and not outbound["files"]:
+                    raise ValueError(
+                        "No usable rows found in the CSV(s) for the selected period — "
+                        "check the dates and that the file has threat/policy or status values."
+                    )
+
+                start_dt, end_dt = _fill_period_from_data(start_dt, end_dt, uploads, emit)
+                total_scanned = tracking.delivered if tracking else None
+                delivered_flagged_count = tracking.delivered_flagged if tracking else None
+                restore_count = tracking.restored if tracking and tracking.restored else None
+                if tracking and not tracking.restored:
+                    emit("[CSV] No released/restored rows in mail tracking — enter a restore count to show a false-positive rate")
+
+                def _optional_count(key: str, label: str, current: int | None) -> int | None:
                     raw = (form.get(key) or "").strip().replace(",", "")
                     if not raw:
-                        emit(f"[CSV] No {label} provided — related rate will show as N/A")
-                        return None
+                        if current is None:
+                            emit(f"[CSV] No {label} available — related rate will show as N/A")
+                        return current
                     try:
                         value = int(raw)
                     except ValueError:
                         emit(f"[WARN] {label} value '{raw}' is not a number — ignoring")
-                        return None
-                    emit(f"[CSV] Using provided {label}: {value:,}")
+                        return current
+                    emit(f"[CSV] Using manually entered {label}: {value:,}")
                     return value
 
-                total_scanned = _optional_count("total_scanned", "total inbound scanned count")
-                delivered_flagged_count = _optional_count("delivered_flagged_count", "delivered-flagged count")
-                restore_count = _optional_count("restore_count", "quarantine-restore count")
+                total_scanned = _optional_count("total_scanned", "delivered (accepted) mail count", total_scanned)
+                delivered_flagged_count = _optional_count("delivered_flagged_count", "delivered-flagged count", delivered_flagged_count)
+                restore_count = _optional_count("restore_count", "quarantine-restore count", restore_count)
             else:
+                data_source = "Demo data (randomly generated)"
                 emit("[Demo] No API key provided — generating demo detection data")
                 records = generate_mock_detections(start_dt, end_dt, count=250)
                 total_scanned = generate_mock_scanned_count(len(records))
@@ -210,6 +381,9 @@ def run_report_job(job_id: str, form: dict):
                 delivered_flagged_count = generate_mock_delivered_flagged_count(total_scanned)
                 emit(f"[Demo] {len(records):,} sample detections generated")
 
+            period_start_str, period_end_str = f"{start_dt:%Y-%m-%d}", f"{end_dt:%Y-%m-%d}"
+            if dates_given:
+                _warn_period_vs_data(records, start_dt, end_dt, emit)
             emit("[Analysis] Categorizing threats and applying cost model...")
             data = build_report_data(
                 records=records,
@@ -220,6 +394,8 @@ def run_report_job(job_id: str, form: dict):
                 restore_count=restore_count,
                 delivered_flagged_count=delivered_flagged_count,
             )
+            data.data_source = data_source
+            data.outbound = outbound_summary
             emit(f"[Analysis] {len(data.category_lines)} threat categories, ${data.total_saved:,.0f} estimated value protected")
 
             emit("[Report] Rendering executive report and efficacy dashboard...")
@@ -300,21 +476,33 @@ def run():
 
     if not (payload.get("customer_name") or "").strip():
         return jsonify(error="Customer name is required."), 400
-    if not payload.get("period_start") or not payload.get("period_end"):
-        return jsonify(error="Period start and end are required."), 400
+    if payload.get("mode") != "csv" and (not payload.get("period_start") or not payload.get("period_end")):
+        return jsonify(error="Period start and end are required for live API and demo runs."), 400
     if payload.get("mode") == "live" and not (payload.get("api_key") or "").strip():
         return jsonify(error="An API key is required for a live Vision One pull."), 400
     if payload.get("mode") == "csv":
-        csv_file = request.files.get("csv_file")
-        if not csv_file or not csv_file.filename:
-            return jsonify(error="A CSV file is required for CSV import mode."), 400
+        csv_files = [f for f in request.files.getlist("csv_file") if f and f.filename]
+        if not csv_files:
+            return jsonify(error="At least one CSV file is required for CSV import mode."), 400
+        # One log type + direction per file, sent in the same order as the files.
+        file_kinds = request.form.getlist("csv_kind")
+        file_dirs = request.form.getlist("csv_direction")
+        if len(file_kinds) != len(csv_files) or len(file_dirs) != len(csv_files):
+            return jsonify(error="Choose a log type and a direction for every uploaded file."), 400
+        for f, k, d in zip(csv_files, file_kinds, file_dirs):
+            if k not in (KIND_POLICY_EVENTS, KIND_MAIL_TRACKING):
+                return jsonify(error=f"{f.filename}: choose whether it is a policy event log or a mail tracking log."), 400
+            if d not in (DIRECTION_INBOUND, DIRECTION_OUTBOUND):
+                return jsonify(error=f"{f.filename}: choose whether it is incoming or outgoing mail."), 400
         # Read into memory now -- the FileStorage's underlying stream isn't
         # safe to touch after this request ends, but the job runs in a
         # background thread. Kept as raw bytes (not decoded here) so
-        # parse_csv_detections can detect UTF-16 vs UTF-8 itself -- Vision
+        # parse_csv_upload can detect UTF-16 vs UTF-8 itself -- Vision
         # One's own exports are UTF-16, not the UTF-8 a decode here would
         # assume.
-        payload["csv_bytes"] = csv_file.read()
+        payload["csv_files"] = [
+            (f.filename, f.read(), k, d) for f, k, d in zip(csv_files, file_kinds, file_dirs)
+        ]
 
     job_id = str(uuid.uuid4())[:8]
     jobs[job_id] = {

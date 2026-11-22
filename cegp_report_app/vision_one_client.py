@@ -154,10 +154,14 @@ SCANTYPE_GATEWAY_ACCEPTED = "gateway_realtime_accepted_mail_traffic"
 BLOCKING_ACTIONS = {
     "block", "blocked", "reset", "quarantine", "quarantined",
     "delete", "deleted", "terminate", "isolate",
+    "reject", "rejected", "drop", "dropped",
 }
 NON_BLOCKING_ACTIONS = {
     "not blocked", "pass", "no action", "log", "logged", "user decision",
     "monitor", "allow", "allowed", "deliver", "delivered",
+    # CEGP event-log exports: a rule matched but the message was let
+    # through (typically DMARC in monitor mode).
+    "bypass", "bypassed",
 }
 
 DETECTIONS_PATH = "/v3.0/search/detections"
@@ -375,11 +379,14 @@ class VisionOneClient:
         top: int = MAX_TOP,
         select: str | None = None,
         max_pages: int | None = None,
+        progress=None,
     ) -> list[dict]:
         """Paginated GET against a Vision One search endpoint.
 
         max_pages=None means "follow nextLink to the end". Use the
         `count()` helper instead of paging when you only need a total.
+        progress, if given, is called with a status line after each page
+        so a long pull can report that it is still moving.
         """
         url = self.base_url + path
         params = {
@@ -402,6 +409,12 @@ class VisionOneClient:
             payload = resp.json()
             items.extend(payload.get("items", []))
             pages += 1
+            if progress:
+                progress(
+                    f"[Vision One] {path.rsplit('/', 1)[-1]}: page {pages}, "
+                    f"{len(items):,} records so far "
+                    f"(window {start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M})"
+                )
             next_link = payload.get("nextLink")
             next_url = next_link or None
             next_params = None  # nextLink already carries the query params
@@ -417,6 +430,7 @@ class VisionOneClient:
         top: int = MAX_TOP,
         select: str | None = None,
         cap: int = SEARCH_API_RESULT_CAP,
+        progress=None,
     ) -> list[dict]:
         """Like _get_pages, but works around the Search API's per-query
         result cap (see SEARCH_API_RESULT_CAP) by bisecting the time range
@@ -438,8 +452,20 @@ class VisionOneClient:
         the left half's end, so windows never overlap and no record is
         double-counted.
         """
-        items = self._get_pages(path, query, start, end, top=top, select=select)
-        if len(items) < cap or (end - start) <= dt.timedelta(seconds=1):
+        try:
+            items = self._get_pages(
+                path, query, start, end, top=top, select=select, progress=progress
+            )
+        except VisionOneAPIError as e:
+            # 408 "query result exceeds the maximum response size" is a
+            # separate limit from the record cap: it was seen live at about
+            # 6,000 records, well under SEARCH_API_RESULT_CAP. Split on it too.
+            if e.status_code != 408 or (end - start) <= dt.timedelta(seconds=1):
+                raise
+            items = None
+        if items is not None and (
+            len(items) < cap or (end - start) <= dt.timedelta(seconds=1)
+        ):
             # Fewer than the cap came back, or the window can't usefully
             # be split further (down to a 1-second sliver) -- trust this
             # as complete. If a single sub-second window still hits the
@@ -451,9 +477,21 @@ class VisionOneClient:
         # same ceiling that affects paging -- discard it and re-fetch each
         # half instead of trusting a possibly-incomplete batch.
         mid = start + (end - start) / 2
-        left = self._get_pages_chunked(path, query, start, mid, top=top, select=select, cap=cap)
+        if progress:
+            reason = (
+                "exceeded the API response-size limit" if items is None
+                else f"hit the {cap:,}-record cap"
+            )
+            progress(
+                f"[Vision One] Window {reason}; splitting "
+                f"{start:%Y-%m-%d %H:%M} to {end:%Y-%m-%d %H:%M} into two halves"
+            )
+        left = self._get_pages_chunked(
+            path, query, start, mid, top=top, select=select, cap=cap, progress=progress
+        )
         right = self._get_pages_chunked(
-            path, query, mid + dt.timedelta(seconds=1), end, top=top, select=select, cap=cap
+            path, query, mid + dt.timedelta(seconds=1), end, top=top, select=select,
+            cap=cap, progress=progress,
         )
         return left + right
 
@@ -517,6 +555,7 @@ class VisionOneClient:
         extra_query: str | None = None,
         gateway_only: bool = True,
         max_pages: int | None = None,
+        progress=None,
     ) -> list[DetectionRecord]:
         """Pull CEGP detection records for a date range.
 
@@ -524,6 +563,7 @@ class VisionOneClient:
         (SCANTYPE_GATEWAY_DETECTION_SIDE: blocking traffic + detection log),
         excluding mailbox/collaboration scan logs. Set False if you want
         every sem-attributed detection regardless of scan type.
+        progress, if given, receives a status line after each page fetched.
         """
         query = self._cegp_query(
             scan_type=SCANTYPE_GATEWAY_DETECTION_SIDE if gateway_only else None,
@@ -543,11 +583,13 @@ class VisionOneClient:
             # No explicit page cap requested -- pull everything for the
             # period, working around the ~10,000-record-per-query ceiling
             # by bisecting the time range instead of silently truncating.
-            raw = self._get_pages_chunked(DETECTIONS_PATH, query, start, end, select=select)
+            raw = self._get_pages_chunked(
+                DETECTIONS_PATH, query, start, end, select=select, progress=progress
+            )
         else:
             raw = self._get_pages(
                 DETECTIONS_PATH, query, start, end,
-                select=select, max_pages=max_pages,
+                select=select, max_pages=max_pages, progress=progress,
             )
         return [DetectionRecord(raw=item) for item in raw]
 
@@ -557,6 +599,19 @@ class VisionOneClient:
             DETECTIONS_PATH,
             self._cegp_query(scan_type=SCANTYPE_GATEWAY_DETECTION_SIDE),
             start, end,
+        )
+
+    def get_accepted_mail_records(
+        self, start: dt.datetime, end: dt.datetime, progress=None
+    ) -> list[dict]:
+        """Fetch the accepted-mail (scanned, delivered-side) email activity
+        records for the period, paged the same way as detections. Callers
+        derive totals from these records rather than from countonly.
+        """
+        query = self._cegp_query(scan_type=SCANTYPE_GATEWAY_ACCEPTED)
+        select = "mailThreatType,scanType,mailDirection,productCode"
+        return self._get_pages_chunked(
+            EMAIL_ACTIVITIES_PATH, query, start, end, select=select, progress=progress
         )
 
     def get_total_scanned_count(

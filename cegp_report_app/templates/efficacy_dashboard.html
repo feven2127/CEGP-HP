@@ -42,17 +42,6 @@
   .btn-primary:hover { background: #b8151b; }
   .btn-outline { background: transparent; color: var(--text); border: 1px solid var(--border); }
   .btn-outline:hover { background: var(--surface2); }
-  .score-section { display: grid; grid-template-columns: auto 1fr; gap: 2rem; background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 1.75rem; margin-bottom: 1.5rem; align-items: center; }
-  .score-donut { position: relative; width: 130px; height: 130px; flex-shrink: 0; }
-  .score-donut svg { transform: rotate(-90deg); }
-  .score-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; }
-  .score-number { font-size: 1.75rem; font-weight: 800; }
-  .score-pct { font-size: 0.7rem; color: var(--muted); }
-  .score-info h3 { font-size: 1.1rem; font-weight: 600; margin-bottom: 0.4rem; }
-  .score-info p { font-size: 0.85rem; color: var(--muted); max-width: 560px; }
-  .score-status { display: inline-flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.7rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; margin-bottom: 0.75rem; }
-  .powered { display:flex; align-items:center; gap:5px; margin-top:.75rem; padding-top:.75rem; border-top:1px solid var(--border); }
-  .powered-txt { font-size:11px; color:var(--muted); }
   .kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
   .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1.25rem; position: relative; overflow: hidden; transition: border-color 0.15s; }
   .kpi-card:hover { border-color: var(--accent); }
@@ -83,25 +72,6 @@
   .ev-pct   { color: var(--muted); text-align: right; width: 10%; font-size: 0.78rem; }
   .bar-wrap { background: var(--surface2); border-radius: 4px; height: 6px; width: 120px; }
   .bar-fill { background: linear-gradient(90deg, var(--accent), var(--orange)); height: 6px; border-radius: 4px; }
-  .gap-filters { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
-  .filter-btn { padding: 0.35rem 0.9rem; border-radius: 999px; font-size: 0.8rem; font-weight: 500; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); transition: all 0.15s; }
-  .filter-btn:hover, .filter-btn.active { background: var(--surface2); color: var(--text); border-color: var(--accent); }
-  .gap-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 0.75rem; transition: border-color 0.15s; overflow: hidden; }
-  .gap-header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 1.25rem; cursor: pointer; gap: 1rem; }
-  .gap-header:hover { background: var(--surface2); }
-  .gap-left  { display: flex; align-items: center; gap: 0.75rem; min-width: 0; }
-  .gap-right { display: flex; align-items: center; gap: 1rem; flex-shrink: 0; }
-  .priority-badge { font-size: 0.7rem; font-weight: 700; padding: 0.2rem 0.6rem; border-radius: 6px; flex-shrink: 0; }
-  .priority-badge.P1 { background: #3a1010; color: var(--red); border: 1px solid var(--red); }
-  .priority-badge.P2 { background: #3a2410; color: var(--orange); border: 1px solid var(--orange); }
-  .priority-badge.P3 { background: #3a3010; color: var(--yellow); border: 1px solid var(--yellow); }
-  .gap-title { font-size: 0.95rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .expand-btn { background: var(--surface2); border: 1px solid var(--border); color: var(--muted); font-size: 0.75rem; padding: 0.3rem 0.7rem; border-radius: 6px; cursor: pointer; transition: all 0.15s; }
-  .expand-btn:hover { color: var(--text); border-color: var(--accent); }
-  .gap-body { padding: 0 1.25rem 1.25rem; border-top: 1px solid var(--border); display: none; }
-  .gap-section { margin-top: 1rem; }
-  .gap-label { font-size: 0.72rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin-bottom: 0.5rem; }
-  .gap-text { font-size: 0.875rem; color: var(--text); line-height: 1.6; }
   .adv-headline { display:grid; grid-template-columns: repeat(3,1fr); gap:0.75rem; margin-bottom:1.2rem; }
   .adv-headline-card { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:1rem; text-align:center; }
   .adv-headline-val { font-size:1.8rem; font-weight:800; letter-spacing:-1px; color:var(--green); }
@@ -121,7 +91,7 @@
   .adv-bar-fill { background:linear-gradient(90deg,var(--green),#3b82f6); height:5px; border-radius:4px; }
   .adv-count { font-size:0.75rem; color:var(--muted); margin-left:2.5rem; }
   .empty-note { text-align:center; padding:2rem; color:var(--muted); background: var(--surface); border: 1px solid var(--border); border-radius: 12px; }
-  @media print { .sidebar, .header-actions, .gap-filters, .expand-btn { display: none !important; } .main { margin-left: 0; } .gap-body { display: block !important; } }
+  @media print { .sidebar, .header-actions { display: none !important; } .main { margin-left: 0; } }
   @media (max-width: 900px) { .sidebar { display: none; } .main { margin-left: 0; } .kpi-grid { grid-template-columns: repeat(2, 1fr); } .charts-grid { grid-template-columns: 1fr; } }
 </style>
 </head>
@@ -142,15 +112,10 @@
     </div>
     <div class="nav-section">Report sections</div>
     <a class="nav-item active" href="#overview">Overview</a>
-    <a class="nav-item" href="#coverage">Coverage Score</a>
     <a class="nav-item" href="#trends">Event Trends</a>
     <a class="nav-item" href="#detections">Detections</a>
-    <a class="nav-item" href="#gaps">Config Gaps</a>
+    {% if data.outbound %}<a class="nav-item" href="#outbound">Outbound Mail</a>{% endif %}
     <a class="nav-item" href="#posture">Security Posture</a>
-    <div class="nav-section">Gaps by priority</div>
-    <a class="nav-item" href="#gaps">P1 Critical ({{ data.config_gaps|selectattr('priority','equalto','P1')|list|length }})</a>
-    <a class="nav-item" href="#gaps">P2 High ({{ data.config_gaps|selectattr('priority','equalto','P2')|list|length }})</a>
-    <a class="nav-item" href="#gaps">P3 Medium ({{ data.config_gaps|selectattr('priority','equalto','P3')|list|length }})</a>
     <a class="back-link" href="{{ url_for('index') }}">&larr; New report</a>
   </aside>
   <main class="main">
@@ -169,46 +134,15 @@
       </div>
       <div class="header-actions no-print">
         <button class="btn btn-outline" onclick="window.print()">Print Report</button>
-        <button class="btn btn-primary" onclick="expandAll()">Expand All Gaps</button>
         <button class="btn btn-outline" onclick="downloadDashboard()">Download HTML</button>
       </div>
     </div>
 
-    {% set status_color = {"Critical": "var(--red)", "Needs attention": "var(--orange)", "Good": "var(--green)", "Strong": "var(--green)", "Unknown": "var(--muted)"} %}
-    {% set dash_len = (data.block_rate / 100 * 326.7) if data.block_rate is not none else 0 %}
-    <div class="score-section" id="coverage">
-      <div class="score-donut">
-        <svg width="130" height="130" viewBox="0 0 130 130">
-          <circle cx="65" cy="65" r="52" fill="none" stroke="#22263a" stroke-width="14"/>
-          <circle cx="65" cy="65" r="52" fill="none" stroke="{{ status_color[data.coverage_status] }}" stroke-width="14" stroke-dasharray="{{ '%.1f'|format(dash_len) }} 326.7" stroke-linecap="round"/>
-        </svg>
-        <div class="score-center">
-          <div class="score-number" style="color:{{ status_color[data.coverage_status] }}">{{ "%.0f"|format(data.block_rate) + "%" if data.block_rate is not none else "N/A" }}</div>
-          <div class="score-pct">coverage</div>
-        </div>
-      </div>
-      <div class="score-info">
-        <div class="score-status" style="color:{{ status_color[data.coverage_status] }}; background: rgba(0,0,0,0.2); border:1px solid {{ status_color[data.coverage_status] }}">{{ data.coverage_status }}</div>
-        <h3>Security Coverage Score</h3>
-        <p>
-          {% if data.block_rate is not none %}
-          {{ "%.1f"|format(data.block_rate) }}% of tracked inbound mail this window was blocked at the gateway ({{ "{:,}".format(data.total_blocked) }} of {{ "{:,}".format(data.total_inbound) }} messages). This window recorded {{ "{:,}".format(data.total_detections) }} total detections, of which {{ "{:,}".format(data.detected_not_blocked) }} were logged in monitor mode rather than stopped. Review the configuration gaps below to strengthen enforcement.
-          {% else %}
-          Coverage can't be computed for this window because the scanned-volume lookup didn't return data (see the P1 configuration gap below). {{ "{:,}".format(data.total_blocked) }} threats were blocked regardless.
-          {% endif %}
-        </p>
-        <div class="powered">
-          <svg width="14" height="14" viewBox="0 0 100 100" aria-hidden="true"><rect width="100" height="100" rx="22" fill="#1e1e2e"/><path d="M70 28 A28 28 0 1 0 72 55" fill="none" stroke="#D71921" stroke-width="9" stroke-linecap="round"/><polygon points="72,42 85,52 72,62" fill="#D71921"/><path d="M38 18 C38 18,41 28,48 31 C41 34,38 44,38 44 C38 44,35 34,28 31 C35 28,38 18,38 18 Z" fill="#D71921"/></svg>
-          <span class="powered-txt">Trend Vision One&trade; &middot; Cloud Email Gateway Protection</span>
-        </div>
-      </div>
-    </div>
-
     <div class="kpi-grid">
-      <div class="kpi-card c-red"><div class="kpi-val">{{ "{:,}".format(data.total_detections) }}</div><div class="kpi-lbl">Total events detected</div></div>
+      <div class="kpi-card c-red"><div class="kpi-val">{{ "{:,}".format(data.total_inbound) if data.total_inbound is not none else "N/A" }}</div><div class="kpi-lbl">Total messages scanned</div></div>
       <div class="kpi-card c-danger"><div class="kpi-val">{{ "{:,}".format(data.total_blocked) }}</div><div class="kpi-lbl">Threats blocked</div></div>
       <div class="kpi-card c-orange"><div class="kpi-val">{{ "{:,}".format(data.detected_not_blocked) }}</div><div class="kpi-lbl">Detected, not blocked</div></div>
-      <div class="kpi-card c-purple"><div class="kpi-val">{{ data.config_gaps|length }}</div><div class="kpi-lbl">Configuration gaps found</div></div>
+      <div class="kpi-card c-purple"><div class="kpi-val">{{ "%.1f"|format(data.block_rate) + "%" if data.block_rate is not none else "N/A" }}</div><div class="kpi-lbl">Of inbound mail was malicious</div></div>
     </div>
 
     <div class="charts-grid" id="trends">
@@ -248,45 +182,37 @@
       {% endif %}
     </div>
 
-    <div class="section" id="gaps">
+    {% if data.outbound %}
+    {% set ob = data.outbound %}
+    <div class="section" id="outbound">
       <div class="section-header">
-        <div class="section-title"><span class="dot"></span> Configuration gaps and recommended actions</div>
-        <span style="font-size:0.8rem;color:var(--muted)">{{ data.config_gaps|length }} gap(s) found</span>
+        <div class="section-title"><span class="dot"></span> Outbound mail</div>
+        <span style="font-size:0.8rem;color:var(--muted)">Reported separately from inbound figures</span>
       </div>
-      <div class="gap-filters no-print">
-        <button class="filter-btn active" onclick="filterGaps('all', this)">All ({{ data.config_gaps|length }})</button>
-        <button class="filter-btn" onclick="filterGaps('P1', this)">P1 Critical ({{ data.config_gaps|selectattr('priority','equalto','P1')|list|length }})</button>
-        <button class="filter-btn" onclick="filterGaps('P2', this)">P2 High ({{ data.config_gaps|selectattr('priority','equalto','P2')|list|length }})</button>
-        <button class="filter-btn" onclick="filterGaps('P3', this)">P3 Medium ({{ data.config_gaps|selectattr('priority','equalto','P3')|list|length }})</button>
+      <div class="kpi-grid">
+        <div class="kpi-card c-red"><div class="kpi-val">{{ "{:,}".format(ob.messages_scanned) if ob.messages_scanned is not none else "N/A" }}</div><div class="kpi-lbl">Outgoing messages scanned</div></div>
+        <div class="kpi-card c-danger"><div class="kpi-val">{{ "{:,}".format(ob.detections) }}</div><div class="kpi-lbl">Outbound threats detected</div></div>
+        <div class="kpi-card c-orange"><div class="kpi-val">{{ "{:,}".format(ob.blocked) }}</div><div class="kpi-lbl">Outbound threats blocked</div></div>
+        <div class="kpi-card c-purple"><div class="kpi-val">{{ "{:,}".format(ob.not_blocked) }}</div><div class="kpi-lbl">Detected, not blocked</div></div>
       </div>
-      <div id="gapList">
-        {% for gap in data.config_gaps %}
-        <div class="gap-card" data-priority="{{ gap.priority }}">
-          <div class="gap-header" onclick="toggleGap(this.querySelector('.expand-btn'))">
-            <div class="gap-left">
-              <span class="priority-badge {{ gap.priority }}">{{ gap.priority }}</span>
-              <span class="gap-title">{{ gap.title }}</span>
-            </div>
-            <div class="gap-right">
-              <button class="expand-btn" onclick="event.stopPropagation(); toggleGap(this)">Details</button>
-            </div>
-          </div>
-          <div class="gap-body">
-            <div class="gap-section">
-              <div class="gap-label">What we saw</div>
-              <div class="gap-text">{{ gap.detail }}</div>
-            </div>
-            <div class="gap-section">
-              <div class="gap-label">Recommended action</div>
-              <div class="gap-text">{{ gap.recommendation }}</div>
-            </div>
-          </div>
-        </div>
-        {% else %}
-        <div class="empty-note">No configuration gaps detected in this window.</div>
-        {% endfor %}
+      {% if ob.top_rules %}
+      <div class="chart-card">
+        <table class="event-table">
+          {% set max_ob = ob.top_rules|map(attribute=1)|max %}
+          {% for name, count in ob.top_rules %}
+          <tr>
+            <td class="ev-name">{{ name }}</td>
+            <td><div class="bar-wrap"><div class="bar-fill" style="width: {{ (count / max_ob * 100)|round(1) if max_ob else 0 }}%"></div></div></td>
+            <td class="ev-count">{{ "{:,}".format(count) }}</td>
+          </tr>
+          {% endfor %}
+        </table>
       </div>
+      {% else %}
+      <div class="empty-note">No outbound threats detected in this window.</div>
+      {% endif %}
     </div>
+    {% endif %}
 
     <div class="section" id="posture">
       <div class="section-header">
@@ -305,8 +231,8 @@
           <div class="adv-headline-lbl">Active protection layers</div>
         </div>
         <div class="adv-headline-card">
-          <div class="adv-headline-val">{{ "%.1f"|format(data.block_rate) + "%" if data.block_rate is not none else "N/A" }}</div>
-          <div class="adv-headline-lbl">Of tracked mail stopped</div>
+          <div class="adv-headline-val">{{ "%.1f"|format(data.enforcement_rate) + "%" if data.enforcement_rate is not none else "N/A" }}</div>
+          <div class="adv-headline-lbl">Of detected threats blocked</div>
         </div>
       </div>
       {% set max_posture = data.security_posture|map(attribute='count')|max %}
@@ -363,24 +289,6 @@ new Chart(document.getElementById('catChart'), {
   options: { responsive: true, maintainAspectRatio: false, cutout: '65%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 8, font: { size: 10 } } } } }
 });
 
-function toggleGap(btn) {
-  const card = btn.closest('.gap-card');
-  const body = card.querySelector('.gap-body');
-  const open = body.style.display === 'block';
-  body.style.display = open ? 'none' : 'block';
-  btn.textContent = open ? 'Details' : 'Hide';
-}
-function expandAll() {
-  document.querySelectorAll('.gap-body').forEach(b => b.style.display = 'block');
-  document.querySelectorAll('.expand-btn').forEach(b => b.textContent = 'Hide');
-}
-function filterGaps(priority, clickedBtn) {
-  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
-  clickedBtn.classList.add('active');
-  document.querySelectorAll('.gap-card').forEach(card => {
-    card.style.display = (priority === 'all' || card.dataset.priority === priority) ? 'block' : 'none';
-  });
-}
 document.querySelectorAll('.nav-item').forEach(item => {
   item.addEventListener('click', function(e) {
     document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));

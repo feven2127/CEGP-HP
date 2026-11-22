@@ -63,9 +63,36 @@ class ReportData:
     mail_status_breakdown: list[tuple[str, int, float | None]] = None
     # Efficacy dashboard (additional report, same underlying data)
     weekly_counts: list[tuple[str, int]] = None
+    # Threats broken down the way the Vision One console's Threats widget
+    # does it, so the two can be compared side by side.
+    console_breakdown: list[dict] = None
+    console_total: int = 0
+    console_unique_messages: int = 0
     config_gaps: list[dict] = None
     security_posture: list[dict] = None
     coverage_status: str = "Unknown"
+    enforcement_rate: float | None = None
+    # Outgoing mail (CSV uploads marked "outgoing"): kept separate from every
+    # inbound figure above -- see build_outbound_summary.
+    outbound: dict | None = None
+    data_source: str = ""
+
+
+def console_category(record: DetectionRecord) -> str:
+    """The label the Vision One console's Threats widget would use for this
+    detection. Event-log CSV rows carry the console's own Threat Type;
+    Advanced Persistent Threat and Malware are split further the way the
+    widget splits them. Records without a Threat Type (live API pulls) fall
+    back to the TMES sub-type."""
+    threat_type = record.raw.get("consoleThreatType") or ""
+    if not threat_type:
+        return categorize(record.threat_name)
+    if threat_type == "Advanced Persistent Threat":
+        return record.raw.get("consoleSubtype") or threat_type
+    if threat_type == "Malware":
+        detected_by = (record.raw.get("detectedBy") or "").lower()
+        return "Malware (PML Detected)" if "machine learning" in detected_by else "Malware (Pattern-based)"
+    return threat_type
 
 
 def build_report_data(
@@ -135,6 +162,23 @@ def build_report_data(
                 loss_per_victim=loss_per_victim,
             )
         )
+
+    # Vision One-style threat breakdown: every live detection, whatever its
+    # action, with the blocked subset alongside so either can be matched
+    # against the console.
+    console_all = Counter(console_category(r) for r in live)
+    console_blocked = Counter(console_category(r) for r in blocked)
+    console_total = sum(console_all.values())
+    console_breakdown = [
+        {
+            "category": name,
+            "detections": n,
+            "share": (n / console_total * 100) if console_total else 0.0,
+            "blocked": console_blocked.get(name, 0),
+        }
+        for name, n in console_all.most_common()
+    ]
+    console_unique_messages = len({r.msg_uuid for r in live if r.msg_uuid})
 
     threat_counter = Counter(r.threat_name for r in blocked)
     threats_by_type = threat_counter.most_common(10)
@@ -321,13 +365,20 @@ def build_report_data(
     for entry in security_posture:
         entry["active"] = entry["count"] > 0
 
-    if block_rate is None:
+    # Dashboard score = ENFORCEMENT rate: of the threats CEGP detected, how
+    # many did it actually block (vs. only log in monitor mode). The block
+    # rate above (blocked / all inbound mail) mostly measures how much of
+    # the customer's mail was malicious, so it can't be "improved" without
+    # blocking clean mail -- it's shown as information, not graded.
+    live_detections = total_blocked + detected_not_blocked
+    enforcement_rate = (total_blocked / live_detections * 100) if live_detections else None
+    if enforcement_rate is None:
         coverage_status = "Unknown"
-    elif block_rate < 50:
+    elif enforcement_rate < 50:
         coverage_status = "Critical"
-    elif block_rate < 80:
+    elif enforcement_rate < 80:
         coverage_status = "Needs attention"
-    elif block_rate < 95:
+    elif enforcement_rate < 95:
         coverage_status = "Good"
     else:
         coverage_status = "Strong"
@@ -359,7 +410,45 @@ def build_report_data(
         total_tracked=total_tracked,
         mail_status_breakdown=mail_status_breakdown,
         weekly_counts=weekly_counts,
+        console_breakdown=console_breakdown,
+        console_total=console_total,
+        console_unique_messages=console_unique_messages,
         config_gaps=config_gaps,
         security_posture=security_posture,
         coverage_status=coverage_status,
+        enforcement_rate=enforcement_rate,
     )
+
+
+def build_outbound_summary(records: list[DetectionRecord], tracking=None) -> dict:
+    """Outgoing-mail figures, reported separately from inbound.
+
+    Outbound threats (malware, phishing or spam sent FROM the customer's
+    domain, DLP / content-filter hits) usually mean a compromised internal
+    account or data leaving the organization -- a different story from
+    inbound attacks. They are deliberately NOT added to the inbound block
+    rate or to the IC3 potential-loss figure, which models attacks coming in.
+    """
+    live = [r for r in records if not r.is_simulation]
+    blocked = [r for r in live if r.was_blocked]
+    cats = Counter(categorize(r.threat_name) for r in live)
+    cats_blocked = Counter(categorize(r.threat_name) for r in blocked)
+    total = len(live)
+    return {
+        "messages_scanned": tracking.total_rows if tracking else None,
+        "delivered": tracking.delivered if tracking else None,
+        "detections": total,
+        "blocked": len(blocked),
+        "not_blocked": total - len(blocked),
+        "categories": [
+            {
+                "category": c,
+                "detections": n,
+                "blocked": cats_blocked.get(c, 0),
+                "share": n / total * 100 if total else 0.0,
+            }
+            for c, n in cats.most_common()
+        ],
+        "top_senders": Counter(r.sender for r in live if r.sender).most_common(5),
+        "top_rules": Counter(r.threat_name for r in live).most_common(5),
+    }
